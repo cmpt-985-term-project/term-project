@@ -217,15 +217,15 @@ def run(basedir,
 
 
         if VIZ:
-            if not os.path.exists('./midas_otuputs'):
-                os.makedirs('./midas_otuputs')
+            if not os.path.exists('./midas_outputs'):
+                os.makedirs('./midas_outputs')
 
             plt.figure(figsize=(12, 6))
             plt.subplot(1,2,1)
             plt.imshow(img)
             plt.subplot(1,2,2)
             plt.imshow(prediction, cmap='jet') 
-            plt.savefig('./midas_otuputs/%s'%(img_name.split('/')[-1]))
+            plt.savefig('./midas_outputs/%s'%(img_name.split('/')[-1]))
             plt.close()
 
         print(filename + '.npy')
