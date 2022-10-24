@@ -39,6 +39,8 @@ def config_parser():
     parser.add_argument("--final_height", type=int, default=288, 
                         help='training image height, default is 512x288')
     # training options
+    parser.add_argument("--N_iters", type=int, default=360000,
+                        help='number of training iterations')
     parser.add_argument("--netdepth", type=int, default=8, 
                         help='layers in network')
     parser.add_argument("--netwidth", type=int, default=256, 
@@ -309,7 +311,7 @@ def train():
 
     poses = torch.Tensor(poses).to(device)
 
-    N_iters = 2000 * 1000 #1000000
+    N_iters = args.N_iters
     print('Begin')
     print('TRAIN views are', i_train)
     print('TEST views are', i_test)
