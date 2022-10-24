@@ -9,6 +9,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from run_nerf_helpers import *
 
+import nvtx
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 DEBUG = False
 # INFERENCE = True
@@ -551,6 +553,7 @@ def batchify_rays(img_idx, chain_bwd, chain_5frames,
     return all_ret
 
 
+@nvtx.annotate("render")
 def render(img_idx, chain_bwd, chain_5frames,
            num_img, H, W, focal,     
            chunk=1024*16, rays=None, c2w=None, ndc=True,
@@ -920,6 +923,8 @@ def compute_2d_prob(weights_p_mix,
     prob_map_p = torch.sum(weights_p_mix.detach() * (1.0 - raw_prob_ref2p), -1)
     return prob_map_p
 
+
+@nvtx.annotate("render_rays")
 def render_rays(img_idx, 
                 chain_bwd,
                 chain_5frames,

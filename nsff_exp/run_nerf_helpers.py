@@ -7,6 +7,8 @@ import cv2
 # TODO: remove this dependency
 # from torchsearchsorted import searchsorted
 
+import nvtx
+
 # Misc
 prob2weights = lambda x: x 
 
@@ -52,6 +54,7 @@ class Embedder:
         self.embed_fns = embed_fns
         self.out_dim = out_dim
         
+    @nvtx.annotate("Input embedding")
     def embed(self, inputs):
         return torch.cat([fn(inputs) for fn in self.embed_fns], -1)
 
@@ -108,6 +111,7 @@ class NeRF(nn.Module):
         self.prob_linear = nn.Linear(W, 2)
         # self.blend_linear = nn.Linear(W // 2, 1)
 
+    @nvtx.annotate("NeRF forward")
     def forward(self, x):
 
         if self.use_viewdirs:
@@ -175,6 +179,7 @@ class Rigid_NeRF(nn.Module):
         # h = F.relu(h)
         # blend_w = nn.functional.sigmoid(self.w_linear(h))
 
+    @nvtx.annotate("Rigid_NeRF forward")
     def forward(self, x):
 
         if self.use_viewdirs:
@@ -208,6 +213,7 @@ class Rigid_NeRF(nn.Module):
         return torch.cat([outputs, v], -1)
 
 # Ray helpers
+@nvtx.annotate("get_rays")
 def get_rays(H, W, focal, c2w):
     i, j = torch.meshgrid(torch.linspace(0, W-1, W), torch.linspace(0, H-1, H))  # pytorch's meshgrid has indexing='ij'
     i = i.t()
@@ -564,6 +570,8 @@ def projection_from_ndc(c2w, H, W, f, weights_ref, raw_pts, n_dim=1):
 
     return pts_2d
 
+
+@nvtx.annotate("compute_optical_flow")
 def compute_optical_flow(pose_post, pose_ref, pose_prev, H, W, focal, ret, n_dim=1):
     pts_2d_post = projection_from_ndc(pose_post, H, W, focal, 
                                       ret['weights_ref_dy'], 
