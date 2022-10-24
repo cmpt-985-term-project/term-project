@@ -784,6 +784,7 @@ def create_nerf(args):
     return render_kwargs_train, render_kwargs_test, start, grad_vars, optimizer
 
 
+@nvtx.annotate("raw2outputs_blending")
 def raw2outputs_blending(raw_dy, 
                          raw_rigid,
                          raw_blend_w,
@@ -834,6 +835,7 @@ def raw2outputs_blending(raw_dy,
            weights_dy
 
 
+@nvtx.annotate("raw2outputs_warp")
 def raw2outputs_warp(raw_p, 
                      z_vals, rays_d, 
                      raw_noise_std=0):
@@ -862,6 +864,7 @@ def raw2outputs_warp(raw_p,
     return rgb_map, depth_map, weights#, alpha #alpha#, 1. - probs
 
 
+@nvtx.annotate("raw2outputs")
 def raw2outputs(raw, z_vals, rays_d, raw_noise_std=0, white_bkgd=False, pytest=False):
     """Transforms model's predictions to semantically meaningful values.
     Args:
@@ -924,7 +927,6 @@ def compute_2d_prob(weights_p_mix,
     return prob_map_p
 
 
-@nvtx.annotate("render_rays")
 def render_rays(img_idx, 
                 chain_bwd,
                 chain_5frames,
