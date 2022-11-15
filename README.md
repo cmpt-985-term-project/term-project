@@ -3,16 +3,13 @@ CMPT 985 Term Project
 
 ### Installation
 
-- Pre-built PyTorch 1.12.1 does not yet support the SM-86 RTX3090 instruction set with CUDA 11.6, so I'm using PyTorch with CUDA 11.3. If this becomes a problem, we can solve it by compiling PyTorch from source.
-
-- Setup for Python virtual environment. From the project root directory, execute:
+- Setup for Python virtual environment. I had a lot of problems with Python 3.10, so I downgraded to 3.9.15 and everything is running smoothly again. From the project root directory, execute:
 
   ```
   python3 -m venv venv
   source venv/bin/activate
   pip3 install -r requirements.txt
   ```
-
 
 
 ### Pre-Processing

@@ -8,12 +8,8 @@ imageio==2.22.2
 tqdm==4.64.1
 kornia==0.6.8
 tensorboard==2.10.1
+torch==1.13.0
+torchvision==0.14.0
 
 # Optional performance profiling
 nvtx==0.2.5
-
-# Pre-built PyTorch 1.12.1 does not yet support the SM-86 RTX3090 instruction set with CUDA 11.6
-# so I'm using PyTorch with CUDA 11.3. If this becomes a problem, we can solve it by compiling PyTorch from source.
---extra-index-url https://download.pytorch.org/whl/cu113
-torch==1.12.1+cu113
-torchvision==0.13.1+cu113
