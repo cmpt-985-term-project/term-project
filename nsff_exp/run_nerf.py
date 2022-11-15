@@ -16,7 +16,6 @@ from load_llff import *
 
 # For performance profiling
 import nvtx
-import contextlib
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 np.random.seed(1)
@@ -160,8 +159,6 @@ def config_parser():
                         help='frequency of tensorboard image logging')
     parser.add_argument("--i_weights", type=int, default=10000, 
                         help='frequency of weight ckpt saving')
-    parser.add_argument("--perf_profiling", action='store_true',
-                        help='enable NVTX performance profiling')
 
     return parser
 
@@ -170,9 +167,6 @@ def train():
 
     parser = config_parser()
     args = parser.parse_args()
-
-    # Optional performance profiler
-    profiler = nvtx.annotate if args.perf_profiling else contextlib.nullcontext
 
     # Load data
     if args.dataset_type == 'llff':
@@ -337,7 +331,7 @@ def train():
     chain_bwd = 0
 
     for i in range(start, N_iters):
-        with profiler(f'Training iteration {i}'):
+        with nvtx.annotate(f'Training iteration {i}'):
             chain_bwd = 1 - chain_bwd
             time0 = time.time()
             print('expname ', expname, ' chain_bwd ', chain_bwd, 
@@ -641,10 +635,10 @@ def train():
             print('prob_reg_loss ', prob_reg_loss.item(),
                 ' entropy_loss ', entropy_loss.item())
 
-            with profiler("back propagation"):
+            with nvtx.annotate("back propagation"):
                 loss.backward()
 
-            with profiler("optimizer step"):
+            with nvtx.annotate("optimizer step"):
                 optimizer.step()
 
             # NOTE: IMPORTANT!
@@ -748,14 +742,14 @@ def train():
                     writer.add_image("val/depth_map_ref", normalize_depth(ret['depth_map_ref']), 
                                     global_step=i, dataformats='HW')
 
-                    writer.add_image("val/rgb_map_rig", torch.clamp(ret['rgb_map_rig'], 0., 1.), 
+                    writer.add_image("val/rgb_map_static", torch.clamp(ret['rgb_map_rig'], 0., 1.),
                                     global_step=i, dataformats='HWC')
-                    writer.add_image("val/depth_map_rig", normalize_depth(ret['depth_map_rig']), 
+                    writer.add_image("val/depth_map_static", normalize_depth(ret['depth_map_rig']),
                                     global_step=i, dataformats='HW')
 
-                    writer.add_image("val/rgb_map_ref_dy", torch.clamp(ret['rgb_map_ref_dy'], 0., 1.), 
+                    writer.add_image("val/rgb_map_ref_dy", torch.clamp(ret['rgb_map_ref_dy'], 0., 1.),
                                     global_step=i, dataformats='HWC')
-                    writer.add_image("val/depth_map_ref_dy", normalize_depth(ret['depth_map_ref_dy']), 
+                    writer.add_image("val/depth_map_ref_dy", normalize_depth(ret['depth_map_ref_dy']),
                                     global_step=i, dataformats='HW')
 
                     # writer.add_image("val/rgb_map_pp_dy", torch.clamp(ret['rgb_map_pp_dy'], 0., 1.), 
