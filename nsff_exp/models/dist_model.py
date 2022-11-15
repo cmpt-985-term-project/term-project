@@ -16,9 +16,10 @@ import functools
 import skimage.transform
 from tqdm import tqdm
 
-
 from . import networks_basic as networks
 import models as util
+
+import nvtx
 
 class DistModel(BaseModel):
     def name(self):
@@ -107,6 +108,8 @@ class DistModel(BaseModel):
             networks.print_network(self.net)
             print('-----------------------------------------------')
 
+
+    @nvtx.annotate("DistModel forward")
     def forward(self, in0, in1, mask=None, retPerLayer=False):
         ''' Function computes the distance between image patches in0 and in1
         INPUTS
