@@ -1,13 +1,14 @@
-import os, sys
+import os
 import numpy as np
 import imageio
-# import json
-import random
 import time
+
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 from run_nerf_helpers import *
+
+from models.nerf import NeRF
+from models.rigid_nerf import Rigid_NeRF
 
 import nvtx
 
@@ -697,12 +698,6 @@ def create_nerf(args):
                  input_ch=input_ch, output_ch=output_ch, skips=skips,
                  input_ch_views=input_ch_views, use_viewdirs=args.use_viewdirs).to(device)
 
-    # print(torch.cuda.device_count())
-    # sys.exit()
-
-    device_ids = list(range(torch.cuda.device_count()))
-    model = torch.nn.DataParallel(model, device_ids=device_ids)
-
     grad_vars = list(model.parameters())
 
     embed_fn_rigid, input_rigid_ch = get_embedder(args.multires, args.i_embed, 3)
@@ -710,8 +705,6 @@ def create_nerf(args):
                              input_ch=input_rigid_ch, output_ch=output_ch, skips=skips,
                              input_ch_views=input_ch_views, 
                              use_viewdirs=args.use_viewdirs).to(device)
-
-    model_rigid = torch.nn.DataParallel(model_rigid, device_ids=device_ids)
 
     model_fine = None
     grad_vars += list(model_rigid.parameters())

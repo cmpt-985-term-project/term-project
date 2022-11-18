@@ -4,15 +4,12 @@ from __future__ import division
 from __future__ import print_function
 
 import numpy as np
-from skimage.measure import compare_ssim
 import torch
-from torch.autograd import Variable
 
 from models import dist_model
 
 class PerceptualLoss(torch.nn.Module):
     def __init__(self, model='net-lin', net='alex', colorspace='rgb', spatial=False, use_gpu=True, gpu_ids=[0], version='0.1'): # VGG using our perceptually-learned weights (LPIPS metric)
-    # def __init__(self, model='net', net='vgg', use_gpu=True): # "default" way of using VGG as a perceptual loss
         super(PerceptualLoss, self).__init__()
         print('Setting up Perceptual loss...')
         self.use_gpu = use_gpu
@@ -48,9 +45,6 @@ def l2(p0, p1, range=255.):
 
 def psnr(p0, p1, peak=255.):
     return 10*np.log10(peak**2/np.mean((1.*p0-1.*p1)**2))
-
-def dssim(p0, p1, range=255.):
-    return (1 - compare_ssim(p0, p1, data_range=range, multichannel=True)) / 2.
 
 def rgb2lab(in_img,mean_cent=False):
     from skimage import color
@@ -149,12 +143,10 @@ def voc_ap(rec, prec, use_07_metric=False):
     return ap
 
 def tensor2im(image_tensor, imtype=np.uint8, cent=1., factor=255./2.):
-# def tensor2im(image_tensor, imtype=np.uint8, cent=1., factor=1.):
     image_numpy = image_tensor[0].cpu().float().numpy()
     image_numpy = (np.transpose(image_numpy, (1, 2, 0)) + cent) * factor
     return image_numpy.astype(imtype)
 
 def im2tensor(image, imtype=np.uint8, cent=1., factor=255./2.):
-# def im2tensor(image, imtype=np.uint8, cent=1., factor=1.):
     return torch.Tensor((image / factor - cent)
                         [:, :, :, np.newaxis].transpose((3, 2, 0, 1)))
