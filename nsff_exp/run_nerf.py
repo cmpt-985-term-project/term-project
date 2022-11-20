@@ -103,10 +103,6 @@ def config_parser():
                         help='options: llff / blender / deepvoxels')
     parser.add_argument("--testskip", type=int, default=8, 
                         help='will load 1/N images from test/val sets, useful for large datasets like deepvoxels')
-    parser.add_argument("--dataset_project", type=str, default='CMPT-983',
-                        help='ClearML project where dataset is to be found')
-    parser.add_argument("--dataset_name", type=str, default='fern',
-                        help='name of ClearML dataset')
 
     ## blender flags
     parser.add_argument("--white_bkgd", action='store_true', 
@@ -168,8 +164,20 @@ def config_parser():
                         help='frequency of tensorboard image logging')
     parser.add_argument("--i_weights", type=int, default=10000, 
                         help='frequency of weight ckpt saving')
+
+    # ClearML Integration Options
     parser.add_argument('--use_clearml', action='store_true',
                         help='use ClearML for experiment tracking')
+    parser.add_argument("--dataset_project", type=str, default='CMPT-985',
+                        help='ClearML project where dataset is to be found')
+    parser.add_argument("--dataset_name", type=str, default='fern',
+                        help='name of ClearML dataset')
+
+    # CMPT-985 Term Project Options...
+    parser.add_argument('--nerf_model', type=str, default='PyTorch',
+                        help='NeRF architecture. Either Pytorch or CutlassMLP')
+    parser.add_argument('--use_fp16', action='store_true',
+                        help='use FP16-precision in models')
 
     return parser
 
