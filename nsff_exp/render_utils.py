@@ -7,8 +7,8 @@ import torch
 import torch.nn.functional as F
 from run_nerf_helpers import *
 
-from models.nerf import NeRF
-from models.rigid_nerf import Rigid_NeRF
+from models.dynamic_nerf import DynamicNeRF
+from models.static_nerf import StaticNeRF
 
 import nvtx
 
@@ -694,14 +694,14 @@ def create_nerf(args):
 
     output_ch = 5 if args.N_importance > 0 else 4
     skips = [4]
-    model = NeRF(D=args.netdepth, W=args.netwidth,
-                 input_ch=input_ch, output_ch=output_ch, skips=skips,
-                 input_ch_views=input_ch_views, use_viewdirs=args.use_viewdirs).to(device)
+    model = DynamicNeRF(D=args.netdepth, W=args.netwidth,
+                        input_ch=input_ch, output_ch=output_ch, skips=skips,
+                        input_ch_views=input_ch_views, use_viewdirs=args.use_viewdirs).to(device)
 
     grad_vars = list(model.parameters())
 
     embed_fn_rigid, input_rigid_ch = get_embedder(args.multires, args.i_embed, 3)
-    model_rigid = Rigid_NeRF(D=args.netdepth, W=args.netwidth,
+    model_rigid = StaticNeRF(D=args.netdepth, W=args.netwidth,
                              input_ch=input_rigid_ch, output_ch=output_ch, skips=skips,
                              input_ch_views=input_ch_views, 
                              use_viewdirs=args.use_viewdirs).to(device)
