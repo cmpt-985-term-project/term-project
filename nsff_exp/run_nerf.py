@@ -178,6 +178,12 @@ def config_parser():
                         help='NeRF architecture. Either Pytorch or CutlassMLP')
     parser.add_argument('--use_fp16', action='store_true',
                         help='use FP16-precision in models')
+    parser.add_argument("--allow_tf32", action='store_true',
+                        help='Enable TF32 tensor cores for matrix multiplication')
+    parser.add_argument("--enable_fused_adam", action='store_true',
+                        help='Enable fused kernel for Adam optimization - default False')
+    parser.add_argument("--enable_pinned_memory", action='store_true',
+                        help='Use pinned memory with data loaders')
 
     return parser
 
@@ -186,6 +192,12 @@ def train():
 
     parser = config_parser()
     args = parser.parse_args()
+
+    # Up-front performance changes
+    # The flag below controls whether to allow TF32 on matmul. This flag defaults to False
+    # in PyTorch 1.12 and later.
+    if args.allow_tf32:
+        torch.backends.cuda.matmul.allow_tf32 = True
 
     # Load data
     if args.use_clearml:
