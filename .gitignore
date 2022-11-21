@@ -1,3 +1,11 @@
+# Project specific stuff to ignore
+nsff_exp/logs/
+nsff_scripts/midas_outputs/
+nsff_scripts/model.pt
+nsff_scripts/models/*.pth
+nsff_scripts/viz_flow/
+nsff_scripts/viz_warp_imgs/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

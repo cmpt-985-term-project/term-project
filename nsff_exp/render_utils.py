@@ -1,13 +1,14 @@
-import os, sys
+import os
 import numpy as np
 import imageio
-# import json
-import random
 import time
+
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 from run_nerf_helpers import *
+
+from models.nerf import StaticNeRF, DynamicNeRF
+from models.cutlass_nerf import CutlassStaticNeRF, CutlassDynamicNeRF
 
 import nvtx
 
@@ -693,25 +694,33 @@ def create_nerf(args):
 
     output_ch = 5 if args.N_importance > 0 else 4
     skips = [4]
-    model = NeRF(D=args.netdepth, W=args.netwidth,
-                 input_ch=input_ch, output_ch=output_ch, skips=skips,
-                 input_ch_views=input_ch_views, use_viewdirs=args.use_viewdirs).to(device)
 
-    # print(torch.cuda.device_count())
-    # sys.exit()
+    if args.nerf_model == 'PyTorch':
+        dynamic_model_class = DynamicNeRF
+        static_model_class = StaticNeRF
+    elif args.nerf_model == 'CutlassMLP':
+        dynamic_model_class = CutlassDynamicNeRF
+        static_model_class = CutlassStaticNeRF
+    else:
+        raise ValueError(f'Unknown NeRF model type: {args.nerf_model}')
 
-    device_ids = list(range(torch.cuda.device_count()))
-    model = torch.nn.DataParallel(model, device_ids=device_ids)
+    model = dynamic_model_class(D=args.netdepth, W=args.netwidth,
+                                input_ch=input_ch, output_ch=output_ch, skips=skips,
+                                input_ch_views=input_ch_views, use_viewdirs=args.use_viewdirs).to(device)
+
+    if args.use_fp16:
+        model = model.half()
 
     grad_vars = list(model.parameters())
 
     embed_fn_rigid, input_rigid_ch = get_embedder(args.multires, args.i_embed, 3)
-    model_rigid = Rigid_NeRF(D=args.netdepth, W=args.netwidth,
-                             input_ch=input_rigid_ch, output_ch=output_ch, skips=skips,
-                             input_ch_views=input_ch_views, 
-                             use_viewdirs=args.use_viewdirs).to(device)
+    model_rigid = static_model_class(D=args.netdepth, W=args.netwidth,
+                                     input_ch=input_rigid_ch, output_ch=output_ch, skips=skips,
+                                     input_ch_views=input_ch_views, 
+                                     use_viewdirs=args.use_viewdirs).to(device)
 
-    model_rigid = torch.nn.DataParallel(model_rigid, device_ids=device_ids)
+    if args.use_fp16:
+        model_rigid = model_rigid.half()
 
     model_fine = None
     grad_vars += list(model_rigid.parameters())

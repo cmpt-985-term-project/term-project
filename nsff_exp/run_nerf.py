@@ -9,6 +9,7 @@ import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 import cv2
 from kornia import create_meshgrid
+from tqdm import tqdm, trange
 
 from render_utils import *
 from run_nerf_helpers import *
@@ -16,6 +17,9 @@ from load_llff import *
 
 # For performance profiling
 import nvtx
+
+# Experiment tracking
+from clearml import Dataset
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 np.random.seed(1)
@@ -99,6 +103,7 @@ def config_parser():
                         help='options: llff / blender / deepvoxels')
     parser.add_argument("--testskip", type=int, default=8, 
                         help='will load 1/N images from test/val sets, useful for large datasets like deepvoxels')
+
     ## blender flags
     parser.add_argument("--white_bkgd", action='store_true', 
                         help='set to render synthetic data on a white bkgd (always use for dvoxels)')
@@ -160,7 +165,19 @@ def config_parser():
     parser.add_argument("--i_weights", type=int, default=10000, 
                         help='frequency of weight ckpt saving')
 
-    # Performance tuning flags
+    # ClearML Integration Options
+    parser.add_argument('--use_clearml', action='store_true',
+                        help='use ClearML for experiment tracking')
+    parser.add_argument("--dataset_project", type=str, default='CMPT-985',
+                        help='ClearML project where dataset is to be found')
+    parser.add_argument("--dataset_name", type=str, default='fern',
+                        help='name of ClearML dataset')
+
+    # CMPT-985 Term Project Options...
+    parser.add_argument('--nerf_model', type=str, default='PyTorch',
+                        help='NeRF architecture. Either Pytorch or CutlassMLP')
+    parser.add_argument('--use_fp16', action='store_true',
+                        help='use FP16-precision in models')
     parser.add_argument("--allow_tf32", action='store_true',
                         help='Enable TF32 tensor cores for matrix multiplication')
     parser.add_argument("--enable_fused_adam", action='store_true',
@@ -183,10 +200,15 @@ def train():
         torch.backends.cuda.matmul.allow_tf32 = True
 
     # Load data
+    if args.use_clearml:
+        datadir = Dataset.get(dataset_name=args.dataset_name, dataset_project=args.dataset_project).get_local_copy()
+    else:
+        datadir = args.datadir
+
     if args.dataset_type == 'llff':
         target_idx = args.target_idx
         images, depths, masks, poses, bds, \
-        render_poses, ref_c2w, motion_coords = load_llff_data(args.datadir, 
+        render_poses, ref_c2w, motion_coords = load_llff_data(datadir,
                                                             args.start_frame, args.end_frame,
                                                             args.factor,
                                                             target_idx=target_idx,
@@ -196,7 +218,7 @@ def train():
 
         hwf = poses[0,:3,-1]
         poses = poses[:,:3,:4]
-        print('Loaded llff', images.shape, render_poses.shape, hwf, args.datadir)
+        print('Loaded llff', images.shape, render_poses.shape, hwf, datadir)
         i_test = []
         i_val = [] #i_test
         i_train = np.array([i for i in np.arange(int(images.shape[0])) if
@@ -285,10 +307,9 @@ def train():
         testsavedir = os.path.join(basedir, expname, 'render-lockcam-slowmo')
         os.makedirs(testsavedir, exist_ok=True)
         with torch.no_grad():
-            render_lockcam_slowmo(ref_c2w, num_img, hwf, 
-                            args.chunk, render_kwargs_test, 
-                            gt_imgs=images, savedir=testsavedir, 
-                            render_factor=args.render_factor,
+            render_lockcam_slowmo(args, ref_c2w, num_img, hwf,
+                            render_kwargs_test,
+                            gt_imgs=images, savedir=testsavedir,
                             target_idx=target_idx)
 
             return 
@@ -344,13 +365,12 @@ def train():
 
     chain_bwd = 0
 
-    for i in range(start, N_iters):
+    start = start + 1
+    for i in trange(start, N_iters, mininterval=60, maxinterval=60):
         with nvtx.annotate(f'Training iteration {i}'):
             chain_bwd = 1 - chain_bwd
             time0 = time.time()
-            print('expname ', expname, ' chain_bwd ', chain_bwd, 
-                ' lindisp ', args.lindisp, ' decay_iteration ', decay_iteration)
-            print('Random FROM SINGLE IMAGE')
+
             # Random from one image
             img_i = np.random.choice(i_train)
 
@@ -364,81 +384,38 @@ def train():
             mask_gt = masks[img_i].cuda()
 
             if img_i == 0:
-                flow_fwd, fwd_mask = read_optical_flow(args.datadir, img_i, 
-                                                    args.start_frame, fwd=True)
+                flow_fwd, fwd_mask = read_optical_flow(datadir, img_i,
+                                                       args.start_frame, fwd=True)
                 flow_bwd, bwd_mask = np.zeros_like(flow_fwd), np.zeros_like(fwd_mask)
             elif img_i == num_img - 1:
-                flow_bwd, bwd_mask = read_optical_flow(args.datadir, img_i, 
-                                                    args.start_frame, fwd=False)
+                flow_bwd, bwd_mask = read_optical_flow(datadir, img_i,
+                                                       args.start_frame, fwd=False)
                 flow_fwd, fwd_mask = np.zeros_like(flow_bwd), np.zeros_like(bwd_mask)
             else:
-                flow_fwd, fwd_mask = read_optical_flow(args.datadir, 
-                                                    img_i, args.start_frame, 
-                                                    fwd=True)
-                flow_bwd, bwd_mask = read_optical_flow(args.datadir, 
-                                                    img_i, args.start_frame, 
-                                                    fwd=False)
+                flow_fwd, fwd_mask = read_optical_flow(datadir,
+                                                       img_i, args.start_frame, 
+                                                       fwd=True)
+                flow_bwd, bwd_mask = read_optical_flow(datadir,
+                                                       img_i, args.start_frame, 
+                                                       fwd=False)
 
-            # # ======================== TEST 
-            TEST = False
-            if TEST:
-                import matplotlib
-                matplotlib.use('Agg')
-                import matplotlib.pyplot as plt
-
-                print('CHECK DEPTH and FLOW and exiting')
-                print(images[img_i].shape)
-                print(flow_fwd.shape, img_i)
-
-                warped_im2 = warp_flow(images[img_i + 1].cpu().numpy(), flow_fwd)
-                warped_im0 = warp_flow(images[img_i - 1].cpu().numpy(), flow_bwd)
-                mask_gt = masks[img_i].cpu().numpy()
-
-                plt.figure(figsize=(12, 6))
-
-                plt.subplot(2, 3, 1)
-                plt.imshow(target.cpu().numpy())
-                plt.subplot(2, 3, 4)
-                plt.imshow(depth_gt.cpu().numpy(), cmap='jet') 
-
-                plt.subplot(2, 3, 2)
-                plt.imshow(flow_to_image(flow_fwd)/255. * fwd_mask[..., np.newaxis])
-
-                plt.subplot(2, 3, 3)
-                plt.imshow(flow_to_image(flow_bwd)/255. * bwd_mask[..., np.newaxis])
-
-                plt.subplot(2, 3, 5)
-                plt.imshow(mask_gt, cmap='gray')
-
-                cv2.imwrite('im_%d.jpg'%(img_i),
-                            np.uint8(np.clip(target.cpu().numpy()[:, :, ::-1], 0, 1) * 255))
-                cv2.imwrite('im_%d_warp.jpg'%(img_i + 1), 
-                            np.uint8(np.clip(warped_im2[:, :, ::-1], 0, 1) * 255))
-                cv2.imwrite('im_%d_warp.jpg'%(img_i - 1), 
-                            np.uint8(np.clip(warped_im0[:, :, ::-1], 0, 1) * 255))
-                plt.savefig('depth_flow_%d.jpg'%img_i)
-                sys.exit()
-
-            #  END OF TEST
             flow_fwd = torch.Tensor(flow_fwd).cuda()
             fwd_mask = torch.Tensor(fwd_mask).cuda()
         
             flow_bwd = torch.Tensor(flow_bwd).cuda()
             bwd_mask = torch.Tensor(bwd_mask).cuda()
+
             # more correct way for flow loss
             flow_fwd = flow_fwd + uv_grid
             flow_bwd = flow_bwd + uv_grid
 
             if N_rand is not None:
                 rays_o, rays_d = get_rays(H, W, focal, torch.Tensor(pose))  # (H, W, 3), (H, W, 3)
-                
                 coords = torch.stack(torch.meshgrid(torch.linspace(0, H-1, H), torch.linspace(0, W-1, W)), -1)  # (H, W, 2)
                 coords = torch.reshape(coords, [-1,2])  # (H * W, 2)
 
                 if args.use_motion_mask and i < decay_iteration * 1000:
-                    print('HARD MINING STAGE !')
                     num_extra_sample = args.num_extra_sample
-                    print('num_extra_sample ', num_extra_sample)
                     select_inds_hard = np.random.choice(hard_coords.shape[0], 
                                                         size=[min(hard_coords.shape[0], 
                                                             num_extra_sample)], 
@@ -487,8 +464,6 @@ def train():
                 chain_5frames = True
             else:
                 chain_5frames = False
-
-            print('chain_5frames ', chain_5frames, ' chain_bwd ', chain_bwd)
 
             ret = render(img_idx_embed, 
                         chain_bwd, 
@@ -576,15 +551,11 @@ def train():
 
             depth_loss = w_depth * compute_depth_loss(ret['depth_map_ref_dy'], -target_depth)
 
-            print('w_depth ', w_depth, 'w_of ', w_of)
-
             if img_i == 0:
-                print('only fwd flow')
                 flow_loss = w_of * compute_mae(render_of_fwd, 
                                             target_of_fwd, 
                                             target_fwd_mask)#torch.sum(torch.abs(render_of_fwd - target_of_fwd) * target_fwd_mask)/(torch.sum(target_fwd_mask) + 1e-8)
             elif img_i == num_img - 1:
-                print('only bwd flow')
                 flow_loss = w_of * compute_mae(render_of_bwd, 
                                             target_of_bwd, 
                                             target_bwd_mask)#torch.sum(torch.abs(render_of_bwd - target_of_bwd) * target_bwd_mask)/(torch.sum(target_bwd_mask) + 1e-8)
@@ -640,15 +611,6 @@ def train():
                 sf_sm_loss + prob_reg_loss + \
                 depth_loss + entropy_loss 
 
-            print('render_loss ', render_loss.item(), 
-                ' bidirection_loss ', sf_cycle_loss.item(), 
-                ' sf_reg_loss ', sf_reg_loss.item())
-            print('depth_loss ', depth_loss.item(), 
-                ' flow_loss ', flow_loss.item(), 
-                ' sf_sm_loss ', sf_sm_loss.item())
-            print('prob_reg_loss ', prob_reg_loss.item(),
-                ' entropy_loss ', entropy_loss.item())
-
             with nvtx.annotate("back propagation"):
                 loss.backward()
 
@@ -665,11 +627,11 @@ def train():
             ################################
 
             dt = time.time()-time0
-            print(f"Step: {global_step}, Loss: {loss}, Time: {dt}")
-            #####           end            #####
 
             # Rest is logging
-            if i%args.i_weights==0:
+
+            # Save network weights
+            if i%args.i_weights==0 and i > 0:
                 path = os.path.join(basedir, expname, '{:06d}.tar'.format(i))
 
                 if args.N_importance > 0:
@@ -690,21 +652,21 @@ def train():
 
                 print('Saved checkpoints at', path)
 
-
+            # Write scalars to log
             if i % args.i_print == 0 and i > 0:
-                writer.add_scalar("train/loss", loss.item(), i)
+                writer.add_scalar("loss", loss.item(), i)
                 
-                writer.add_scalar("train/render_loss", render_loss.item(), i)
-                writer.add_scalar("train/depth_loss", depth_loss.item(), i)
-                writer.add_scalar("train/flow_loss", flow_loss.item(), i)
-                writer.add_scalar("train/prob_reg_loss", prob_reg_loss.item(), i)
+                writer.add_scalar("render_loss", render_loss.item(), i)
+                writer.add_scalar("depth_loss", depth_loss.item(), i)
+                writer.add_scalar("flow_loss", flow_loss.item(), i)
+                writer.add_scalar("prob_reg_loss", prob_reg_loss.item(), i)
 
-                writer.add_scalar("train/sf_reg_loss", sf_reg_loss.item(), i)
-                writer.add_scalar("train/sf_cycle_loss", sf_cycle_loss.item(), i)
-                writer.add_scalar("train/sf_sm_loss", sf_sm_loss.item(), i)
+                writer.add_scalar("sf_reg_loss", sf_reg_loss.item(), i)
+                writer.add_scalar("sf_cycle_loss", sf_cycle_loss.item(), i)
+                writer.add_scalar("sf_sm_loss", sf_sm_loss.item(), i)
 
-
-            if i%args.i_img == 0:
+            # Generate and save images (RGB, depth map, etc) to log
+            if i%args.i_img == 0 and i > 0:
                 # img_i = np.random.choice(i_val)
                 target = images[img_i]
                 pose = poses[img_i, :3,:4]
@@ -713,18 +675,18 @@ def train():
                 # img_idx_embed = img_i/num_img * 2. - 1.0
 
                 # if img_i == 0:
-                #     flow_fwd, fwd_mask = read_optical_flow(args.datadir, img_i, 
+                #     flow_fwd, fwd_mask = read_optical_flow(datadir, img_i,
                 #                                            args.start_frame, fwd=True)
                 #     flow_bwd, bwd_mask = np.zeros_like(flow_fwd), np.zeros_like(fwd_mask)
                 # elif img_i == num_img - 1:
-                #     flow_bwd, bwd_mask = read_optical_flow(args.datadir, img_i, 
+                #     flow_bwd, bwd_mask = read_optical_flow(datadir, img_i,
                 #                                            args.start_frame, fwd=False)
                 #     flow_fwd, fwd_mask = np.zeros_like(flow_bwd), np.zeros_like(bwd_mask)
                 # else:
-                #     flow_fwd, fwd_mask = read_optical_flow(args.datadir, 
+                #     flow_fwd, fwd_mask = read_optical_flow(datadir,
                 #                                            img_i, args.start_frame, 
                 #                                            fwd=True)
-                #     flow_bwd, bwd_mask = read_optical_flow(args.datadir, 
+                #     flow_bwd, bwd_mask = read_optical_flow(datadir,
                 #                                            img_i, args.start_frame, 
                 #                                            fwd=False)
 
@@ -769,15 +731,15 @@ def train():
                     # writer.add_image("val/rgb_map_pp_dy", torch.clamp(ret['rgb_map_pp_dy'], 0., 1.), 
                                     # global_step=i, dataformats='HWC')
 
-                    writer.add_image("val/gt_rgb", target, 
+                    writer.add_image("val/gt_rgb", target,
                                     global_step=i, dataformats='HWC')
-                    writer.add_image("val/monocular_disp", 
-                                    torch.clamp(target_depth /percentile(target_depth, 97), 0., 1.), 
+                    writer.add_image("val/monocular_disp",
+                                    torch.clamp(target_depth /percentile(target_depth, 97), 0., 1.),
                                     global_step=i, dataformats='HW')
 
-                    writer.add_image("val/weights_map_dd", 
-                                    ret['weights_map_dd'], 
-                                    global_step=i, 
+                    writer.add_image("val/weights_map_dd",
+                                    ret['weights_map_dd'],
+                                    global_step=i,
                                     dataformats='HW')
 
             global_step += 1
