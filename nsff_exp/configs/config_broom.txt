@@ -10,7 +10,6 @@ llffhold = 10
 
 N_rand = 1024
 N_samples = 128
-N_importance = 0
 
 raw_noise_std = 1e0
 no_ndc = False

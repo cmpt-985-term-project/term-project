@@ -67,8 +67,6 @@ def config_parser():
     # rendering options
     parser.add_argument("--N_samples", type=int, default=64, 
                         help='number of coarse samples per ray')
-    parser.add_argument("--N_importance", type=int, default=0,
-                        help='number of additional fine samples per ray')
     parser.add_argument("--perturb", type=float, default=1.,
                         help='set to 0. for no jitter, 1. for jitter')
     parser.add_argument("--i_embed", type=int, default=0, 
@@ -626,21 +624,12 @@ def train():
             if i%args.i_weights==0 and i > 0:
                 path = os.path.join(basedir, expname, '{:06d}.tar'.format(i))
 
-                if args.N_importance > 0:
-                    torch.save({
-                        'global_step': global_step,
-                        'network_fn_state_dict': render_kwargs_train['network_fn'].state_dict(),
-                        'network_rigid': render_kwargs_train['network_rigid'].state_dict(),
-                        'optimizer_state_dict': optimizer.state_dict(),
-                    }, path)
-                
-                else:
-                    torch.save({
-                        'global_step': global_step,
-                        'network_fn_state_dict': render_kwargs_train['network_fn'].state_dict(),
-                        'network_rigid': render_kwargs_train['network_rigid'].state_dict(),
-                        'optimizer_state_dict': optimizer.state_dict(),
-                    }, path)
+                torch.save({
+                    'global_step': global_step,
+                    'network_fn_state_dict': render_kwargs_train['network_fn'].state_dict(),
+                    'network_rigid': render_kwargs_train['network_rigid'].state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                }, path)
 
                 print('Saved checkpoints at', path)
 

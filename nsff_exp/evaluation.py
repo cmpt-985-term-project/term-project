@@ -47,14 +47,6 @@ def config_parser():
     parser.add_argument("--final_height", type=int, default=288, 
                         help='training image height, default is 512x288')
     # training options
-    parser.add_argument("--netdepth", type=int, default=8, 
-                        help='layers in network')
-    parser.add_argument("--netwidth", type=int, default=256, 
-                        help='channels per layer')
-    parser.add_argument("--netdepth_fine", type=int, default=8, 
-                        help='layers in fine network')
-    parser.add_argument("--netwidth_fine", type=int, default=256, 
-                        help='channels per layer in fine network')
     parser.add_argument("--N_rand", type=int, default=32*32*4, 
                         help='batch size (number of random rays per gradient step)')
     parser.add_argument("--lrate", type=float, default=5e-4, 
@@ -75,8 +67,6 @@ def config_parser():
     # rendering options
     parser.add_argument("--N_samples", type=int, default=64, 
                         help='number of coarse samples per ray')
-    parser.add_argument("--N_importance", type=int, default=0,
-                        help='number of additional fine samples per ray')
     parser.add_argument("--perturb", type=float, default=1.,
                         help='set to 0. for no jitter, 1. for jitter')
     parser.add_argument("--i_embed", type=int, default=0, 
