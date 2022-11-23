@@ -164,8 +164,6 @@ def config_parser():
     # CMPT-985 Term Project Options...
     parser.add_argument('--nerf_model', type=str, default='PyTorch',
                         help='NeRF architecture. Either Pytorch or CutlassMLP')
-    parser.add_argument('--use_fp16', action='store_true',
-                        help='use FP16-precision in models')
     parser.add_argument("--allow_tf32", action='store_true',
                         help='Enable TF32 tensor cores for matrix multiplication')
     parser.add_argument("--enable_fused_adam", action='store_true',

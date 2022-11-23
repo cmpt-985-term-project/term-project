@@ -409,7 +409,6 @@ def render_rays_sm(img_idx,
                 retraw=False,
                 lindisp=False,
                 perturb=0.,
-                N_importance=0,
                 network_rigid=None,
                 white_bkgd=False,
                 raw_noise_std=0.,
@@ -429,9 +428,6 @@ def render_rays_sm(img_idx,
       lindisp: bool. If True, sample linearly in inverse depth rather than in depth.
       perturb: float, 0 or 1. If non-zero, each ray is sampled at stratified
         random points in time.
-      N_importance: int. Number of additional times to sample along each ray.
-        These samples are only passed to network_fine.
-      network_fine: "fine" network with same spec as network_fn.
       white_bkgd: bool. If True, assume a white background.
       raw_noise_std: ...
       verbose: bool. If True, print more debugging info.
@@ -513,22 +509,18 @@ def batchify(fn, chunk):
     return ret
 
 
-def run_network(inputs, viewdirs, fn, embed_fn, embeddirs_fn, netchunk=1024*16):
+def run_network(input_position, input_view, fn, netchunk=1024*16):
     """Prepares inputs and applies network 'fn'.
     """
-    inputs_flat = torch.reshape(inputs, [-1, inputs.shape[-1]])
-    embedded = embed_fn(inputs_flat)
+    input_position_flat = torch.reshape(input_position, [-1, input_position.shape[-1]])
 
-    if viewdirs is not None:
-        input_dirs = viewdirs[:,None].expand(inputs[:, :, :3].shape)
-        input_dirs_flat = torch.reshape(input_dirs, [-1, input_dirs.shape[-1]])
-        embedded_dirs = embeddirs_fn(input_dirs_flat)
-        embedded = torch.cat([embedded, embedded_dirs], -1)
-    
-    outputs_flat = batchify(fn, netchunk)(embedded)
-    outputs = torch.reshape(outputs_flat, 
-                            list(inputs.shape[:-1]) + [outputs_flat.shape[-1]])
-    return outputs
+    input_view = input_view[:, None].expand(input_position[:, :, :3].shape)
+    input_view_flat = torch.reshape(input_view, [-1, input_view.shape[-1]])
+
+    output_flat = batchify(fn, netchunk)(torch.cat([input_position_flat, input_view_flat], dim=-1))
+    output = torch.reshape(output_flat, list(input_position.shape[:-1]) + [output_flat.shape[-1]])
+
+    return output
 
 
 def batchify_rays(img_idx, chain_bwd, chain_5frames, 
@@ -675,18 +667,9 @@ def render_bullet_time(render_poses, img_idx_embed, num_img,
 def create_nerf(args):
     """Instantiate NeRF's MLP model.
     """
-    # XYZ + T
-    embed_fn, input_ch = get_embedder(args.multires, args.i_embed, 4)
-
-    input_ch_views = 0
-    embeddirs_fn, input_ch_views = get_embedder(args.multires_views, args.i_embed, 3)
-
-    output_ch = 5 if args.N_importance > 0 else 4
-    skips = [4]
-
     if args.nerf_model == 'PyTorch':
-        dynamic_model_class = DynamicNeRF
-        static_model_class = StaticNeRF
+        model = DynamicNeRF().to(device)
+        model_rigid = StaticNeRF().to(device)
     elif args.nerf_model == 'CutlassMLP':
         dynamic_model_class = CutlassDynamicNeRF
         static_model_class = CutlassStaticNeRF
@@ -696,34 +679,12 @@ def create_nerf(args):
     else:
         raise ValueError(f'Unknown NeRF model type: {args.nerf_model}')
 
-    model = dynamic_model_class(D=args.netdepth, W=args.netwidth,
-                                input_ch=input_ch, output_ch=output_ch, skips=skips,
-                                input_ch_views=input_ch_views).to(device)
+    grad_vars = list(model.parameters()) + list(model_rigid.parameters())
 
-    if args.use_fp16:
-        model = model.half()
-
-    grad_vars = list(model.parameters())
-
-    embed_fn_rigid, input_rigid_ch = get_embedder(args.multires, args.i_embed, 3)
-    model_rigid = static_model_class(D=args.netdepth, W=args.netwidth,
-                                     input_ch=input_rigid_ch, output_ch=output_ch, skips=skips,
-                                     input_ch_views=input_ch_views).to(device)
-
-    if args.use_fp16:
-        model_rigid = model_rigid.half()
-
-    grad_vars += list(model_rigid.parameters())
-
-    network_query_fn = lambda inputs, viewdirs, network_fn : run_network(inputs, viewdirs, network_fn,
-                                                                         embed_fn=embed_fn,
-                                                                         embeddirs_fn=embeddirs_fn,
-                                                                         netchunk=args.netchunk)
-
-    rigid_network_query_fn = lambda inputs, viewdirs, network_fn : run_network(inputs, viewdirs, network_fn,
-                                                                               embed_fn=embed_fn_rigid,
-                                                                               embeddirs_fn=embeddirs_fn,
-                                                                               netchunk=args.netchunk)
+    # Refactoring the embedding into the model class has made these two functions identical
+    # I'll leave things the way they are, though -- maybe will clean up later.
+    network_query_fn = lambda inputs, viewdirs, network_fn : run_network(inputs, viewdirs, network_fn, netchunk=args.netchunk)
+    rigid_network_query_fn = lambda inputs, viewdirs, network_fn : run_network(inputs, viewdirs, network_fn, netchunk=args.netchunk)
 
     # Create optimizer
     optimizer = torch.optim.Adam(params=grad_vars, lr=args.lrate, betas=(0.9, 0.999))
@@ -756,7 +717,6 @@ def create_nerf(args):
     render_kwargs_train = {
         'network_query_fn' : network_query_fn,
         'perturb' : args.perturb,
-        'N_importance' : args.N_importance,
         'rigid_network_query_fn':rigid_network_query_fn,
         'network_rigid' : model_rigid,
         'N_samples' : args.N_samples,
@@ -900,8 +860,7 @@ def raw2outputs(raw, z_vals, rays_d, raw_noise_std=0, white_bkgd=False, pytest=F
 
 def get_rigid_outputs(pts, viewdirs, 
                       network_query_fn, 
-                      network_rigid, 
-                      # netowrk_blend,
+                      network_rigid,
                       z_vals, rays_d, 
                       raw_noise_std):
 
@@ -935,9 +894,7 @@ def render_rays(img_idx,
                 retraw=False,
                 lindisp=False,
                 perturb=0.,
-                N_importance=0,
                 network_rigid=None,
-                # netowrk_blend=None,
                 white_bkgd=False,
                 raw_noise_std=0.,
                 verbose=False,
@@ -957,9 +914,6 @@ def render_rays(img_idx,
       lindisp: bool. If True, sample linearly in inverse depth rather than in depth.
       perturb: float, 0 or 1. If non-zero, each ray is sampled at stratified
         random points in time.
-      N_importance: int. Number of additional times to sample along each ray.
-        These samples are only passed to network_fine.
-      network_fine: "fine" network with same spec as network_fn.
       white_bkgd: bool. If True, assume a white background.
       raw_noise_std: ...
       verbose: bool. If True, print more debugging info.
