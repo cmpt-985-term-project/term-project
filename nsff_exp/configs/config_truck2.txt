@@ -11,7 +11,6 @@ N_samples = 128
 N_importance = 0
 netwidth = 256
 
-use_viewdirs = True
 raw_noise_std = 1e0
 no_ndc = False
 lindisp = False

@@ -285,7 +285,7 @@ def render_sm(img_idx, chain_bwd, chain_5frames,
                num_img, H, W, focal,     
                chunk=1024*16, rays=None, c2w=None, ndc=True,
                near=0., far=1.,
-               use_viewdirs=False, c2w_staticcam=None,
+               c2w_staticcam=None,
                **kwargs):
     """Render rays
     Args:
@@ -300,7 +300,6 @@ def render_sm(img_idx, chain_bwd, chain_5frames,
       ndc: bool. If True, represent ray origin, direction in NDC coordinates.
       near: float or array of shape [batch_size]. Nearest distance for a ray.
       far: float or array of shape [batch_size]. Farthest distance for a ray.
-      use_viewdirs: bool. If True, use viewing direction of a point in space in model.
       c2w_staticcam: array of shape [3, 4]. If not None, use this transformation matrix for 
        camera while using other c2w argument for viewing directions.
     Returns:
@@ -316,14 +315,13 @@ def render_sm(img_idx, chain_bwd, chain_5frames,
         # use provided ray batch
         rays_o, rays_d = rays
 
-    if use_viewdirs:
-        # provide ray directions as input
-        viewdirs = rays_d
-        if c2w_staticcam is not None:
-            # special case to visualize effect of viewdirs
-            rays_o, rays_d = get_rays(H, W, focal, c2w_staticcam)
-        viewdirs = viewdirs / torch.norm(viewdirs, dim=-1, keepdim=True)
-        viewdirs = torch.reshape(viewdirs, [-1,3]).float()
+    # provide ray directions as input
+    viewdirs = rays_d
+    if c2w_staticcam is not None:
+        # special case to visualize effect of viewdirs
+        rays_o, rays_d = get_rays(H, W, focal, c2w_staticcam)
+    viewdirs = viewdirs / torch.norm(viewdirs, dim=-1, keepdim=True)
+    viewdirs = torch.reshape(viewdirs, [-1,3]).float()
 
     sh = rays_d.shape # [..., 3]
 
@@ -337,9 +335,7 @@ def render_sm(img_idx, chain_bwd, chain_5frames,
 
     near, far = near * torch.ones_like(rays_d[...,:1]), far * torch.ones_like(rays_d[...,:1])
     rays = torch.cat([rays_o, rays_d, near, far], -1)
-
-    if use_viewdirs:
-        rays = torch.cat([rays, viewdirs], -1)
+    rays = torch.cat([rays, viewdirs], -1)
 
     # Render and reshape
     all_ret = batchify_rays_sm(img_idx, chain_bwd, chain_5frames, 
@@ -559,7 +555,7 @@ def render(img_idx, chain_bwd, chain_5frames,
            num_img, H, W, focal,     
            chunk=1024*16, rays=None, c2w=None, ndc=True,
            near=0., far=1.,
-           use_viewdirs=False, c2w_staticcam=None,
+           c2w_staticcam=None,
            **kwargs):
     """Render rays
     Args:
@@ -574,7 +570,6 @@ def render(img_idx, chain_bwd, chain_5frames,
       ndc: bool. If True, represent ray origin, direction in NDC coordinates.
       near: float or array of shape [batch_size]. Nearest distance for a ray.
       far: float or array of shape [batch_size]. Farthest distance for a ray.
-      use_viewdirs: bool. If True, use viewing direction of a point in space in model.
       c2w_staticcam: array of shape [3, 4]. If not None, use this transformation matrix for 
        camera while using other c2w argument for viewing directions.
     Returns:
@@ -590,14 +585,13 @@ def render(img_idx, chain_bwd, chain_5frames,
         # use provided ray batch
         rays_o, rays_d = rays
 
-    if use_viewdirs:
-        # provide ray directions as input
-        viewdirs = rays_d
-        if c2w_staticcam is not None:
-            # special case to visualize effect of viewdirs
-            rays_o, rays_d = get_rays(H, W, focal, c2w_staticcam)
-        viewdirs = viewdirs / torch.norm(viewdirs, dim=-1, keepdim=True)
-        viewdirs = torch.reshape(viewdirs, [-1,3]).float()
+    # provide ray directions as input
+    viewdirs = rays_d
+    if c2w_staticcam is not None:
+        # special case to visualize effect of viewdirs
+        rays_o, rays_d = get_rays(H, W, focal, c2w_staticcam)
+    viewdirs = viewdirs / torch.norm(viewdirs, dim=-1, keepdim=True)
+    viewdirs = torch.reshape(viewdirs, [-1,3]).float()
 
     sh = rays_d.shape # [..., 3]
 
@@ -611,9 +605,7 @@ def render(img_idx, chain_bwd, chain_5frames,
 
     near, far = near * torch.ones_like(rays_d[...,:1]), far * torch.ones_like(rays_d[...,:1])
     rays = torch.cat([rays_o, rays_d, near, far], -1)
-
-    if use_viewdirs:
-        rays = torch.cat([rays, viewdirs], -1)
+    rays = torch.cat([rays, viewdirs], -1)
 
     # Render and reshape
     all_ret = batchify_rays(img_idx, chain_bwd, chain_5frames, 
@@ -687,10 +679,7 @@ def create_nerf(args):
     embed_fn, input_ch = get_embedder(args.multires, args.i_embed, 4)
 
     input_ch_views = 0
-    embeddirs_fn = None
-
-    if args.use_viewdirs:
-        embeddirs_fn, input_ch_views = get_embedder(args.multires_views, args.i_embed, 3)
+    embeddirs_fn, input_ch_views = get_embedder(args.multires_views, args.i_embed, 3)
 
     output_ch = 5 if args.N_importance > 0 else 4
     skips = [4]
@@ -701,12 +690,15 @@ def create_nerf(args):
     elif args.nerf_model == 'CutlassMLP':
         dynamic_model_class = CutlassDynamicNeRF
         static_model_class = CutlassStaticNeRF
+    elif args.nerf_model == 'FusedMLP':
+        dynamic_model_class = CutlassDynamicNeRF
+        static_model_class = CutlassStaticNeRF
     else:
         raise ValueError(f'Unknown NeRF model type: {args.nerf_model}')
 
     model = dynamic_model_class(D=args.netdepth, W=args.netwidth,
                                 input_ch=input_ch, output_ch=output_ch, skips=skips,
-                                input_ch_views=input_ch_views, use_viewdirs=args.use_viewdirs).to(device)
+                                input_ch_views=input_ch_views).to(device)
 
     if args.use_fp16:
         model = model.half()
@@ -716,13 +708,11 @@ def create_nerf(args):
     embed_fn_rigid, input_rigid_ch = get_embedder(args.multires, args.i_embed, 3)
     model_rigid = static_model_class(D=args.netdepth, W=args.netwidth,
                                      input_ch=input_rigid_ch, output_ch=output_ch, skips=skips,
-                                     input_ch_views=input_ch_views, 
-                                     use_viewdirs=args.use_viewdirs).to(device)
+                                     input_ch_views=input_ch_views).to(device)
 
     if args.use_fp16:
         model_rigid = model_rigid.half()
 
-    model_fine = None
     grad_vars += list(model_rigid.parameters())
 
     network_query_fn = lambda inputs, viewdirs, network_fn : run_network(inputs, viewdirs, network_fn,
@@ -761,8 +751,6 @@ def create_nerf(args):
         # Load model
         print('LOADING SF MODEL!!!!!!!!!!!!!!!!!!!')
         model_rigid.load_state_dict(ckpt['network_rigid'])
-        if model_fine is not None:
-            model_fine.load_state_dict(ckpt['network_fine_state_dict'])
 
     ##########################
     render_kwargs_train = {
@@ -773,7 +761,6 @@ def create_nerf(args):
         'network_rigid' : model_rigid,
         'N_samples' : args.N_samples,
         'network_fn' : model,
-        'use_viewdirs' : args.use_viewdirs,
         'white_bkgd' : args.white_bkgd,
         'raw_noise_std' : args.raw_noise_std,
         'inference': False

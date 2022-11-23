@@ -79,8 +79,6 @@ def config_parser():
                         help='number of additional fine samples per ray')
     parser.add_argument("--perturb", type=float, default=1.,
                         help='set to 0. for no jitter, 1. for jitter')
-    parser.add_argument("--use_viewdirs", action='store_true', 
-                        help='use full 5D input instead of 3D')
     parser.add_argument("--i_embed", type=int, default=0, 
                         help='set 0 for default positional encoding, -1 for none')
     parser.add_argument("--multires", type=int, default=10, 
@@ -383,79 +381,81 @@ def train():
             hard_coords = torch.Tensor(motion_coords[img_i]).cuda()
             mask_gt = masks[img_i].cuda()
 
-            if img_i == 0:
-                flow_fwd, fwd_mask = read_optical_flow(datadir, img_i,
-                                                       args.start_frame, fwd=True)
-                flow_bwd, bwd_mask = np.zeros_like(flow_fwd), np.zeros_like(fwd_mask)
-            elif img_i == num_img - 1:
-                flow_bwd, bwd_mask = read_optical_flow(datadir, img_i,
-                                                       args.start_frame, fwd=False)
-                flow_fwd, fwd_mask = np.zeros_like(flow_bwd), np.zeros_like(bwd_mask)
-            else:
-                flow_fwd, fwd_mask = read_optical_flow(datadir,
-                                                       img_i, args.start_frame, 
-                                                       fwd=True)
-                flow_bwd, bwd_mask = read_optical_flow(datadir,
-                                                       img_i, args.start_frame, 
-                                                       fwd=False)
+            with nvtx.annotate("Read Optical Flow"):
+                if img_i == 0:
+                    flow_fwd, fwd_mask = read_optical_flow(datadir, img_i,
+                                                        args.start_frame, fwd=True)
+                    flow_bwd, bwd_mask = np.zeros_like(flow_fwd), np.zeros_like(fwd_mask)
+                elif img_i == num_img - 1:
+                    flow_bwd, bwd_mask = read_optical_flow(datadir, img_i,
+                                                        args.start_frame, fwd=False)
+                    flow_fwd, fwd_mask = np.zeros_like(flow_bwd), np.zeros_like(bwd_mask)
+                else:
+                    flow_fwd, fwd_mask = read_optical_flow(datadir,
+                                                        img_i, args.start_frame, 
+                                                        fwd=True)
+                    flow_bwd, bwd_mask = read_optical_flow(datadir,
+                                                        img_i, args.start_frame, 
+                                                        fwd=False)
 
-            flow_fwd = torch.Tensor(flow_fwd).cuda()
-            fwd_mask = torch.Tensor(fwd_mask).cuda()
-        
-            flow_bwd = torch.Tensor(flow_bwd).cuda()
-            bwd_mask = torch.Tensor(bwd_mask).cuda()
+                flow_fwd = torch.Tensor(flow_fwd).cuda()
+                fwd_mask = torch.Tensor(fwd_mask).cuda()
+            
+                flow_bwd = torch.Tensor(flow_bwd).cuda()
+                bwd_mask = torch.Tensor(bwd_mask).cuda()
 
-            # more correct way for flow loss
-            flow_fwd = flow_fwd + uv_grid
-            flow_bwd = flow_bwd + uv_grid
+                # more correct way for flow loss
+                flow_fwd = flow_fwd + uv_grid
+                flow_bwd = flow_bwd + uv_grid
 
             if N_rand is not None:
-                rays_o, rays_d = get_rays(H, W, focal, torch.Tensor(pose))  # (H, W, 3), (H, W, 3)
-                coords = torch.stack(torch.meshgrid(torch.linspace(0, H-1, H), torch.linspace(0, W-1, W)), -1)  # (H, W, 2)
-                coords = torch.reshape(coords, [-1,2])  # (H * W, 2)
+                with nvtx.annotate("Get Rays"):
+                    rays_o, rays_d = get_rays(H, W, focal, torch.Tensor(pose))  # (H, W, 3), (H, W, 3)
+                    coords = torch.stack(torch.meshgrid(torch.linspace(0, H-1, H), torch.linspace(0, W-1, W)), -1)  # (H, W, 2)
+                    coords = torch.reshape(coords, [-1,2])  # (H * W, 2)
 
-                if args.use_motion_mask and i < decay_iteration * 1000:
-                    num_extra_sample = args.num_extra_sample
-                    select_inds_hard = np.random.choice(hard_coords.shape[0], 
-                                                        size=[min(hard_coords.shape[0], 
-                                                            num_extra_sample)], 
+                    if args.use_motion_mask and i < decay_iteration * 1000:
+                        num_extra_sample = args.num_extra_sample
+                        select_inds_hard = np.random.choice(hard_coords.shape[0], 
+                                                            size=[min(hard_coords.shape[0], 
+                                                                num_extra_sample)], 
+                                                            replace=False)  # (N_rand,)
+                        select_inds_all = np.random.choice(coords.shape[0], 
+                                                        size=[N_rand], 
                                                         replace=False)  # (N_rand,)
-                    select_inds_all = np.random.choice(coords.shape[0], 
+
+                        select_coords_hard = hard_coords[select_inds_hard].long()
+                        select_coords_all = coords[select_inds_all].long()
+
+                        select_coords = torch.cat([select_coords_all, select_coords_hard], 0)
+
+                    else:
+                        select_inds = np.random.choice(coords.shape[0], 
                                                     size=[N_rand], 
                                                     replace=False)  # (N_rand,)
-
-                    select_coords_hard = hard_coords[select_inds_hard].long()
-                    select_coords_all = coords[select_inds_all].long()
-
-                    select_coords = torch.cat([select_coords_all, select_coords_hard], 0)
-
-                else:
-                    select_inds = np.random.choice(coords.shape[0], 
-                                                size=[N_rand], 
-                                                replace=False)  # (N_rand,)
-                    select_coords = coords[select_inds].long()  # (N_rand, 2)
-                
-                rays_o = rays_o[select_coords[:, 0], 
-                                select_coords[:, 1]]  # (N_rand, 3)
-                rays_d = rays_d[select_coords[:, 0], 
-                                select_coords[:, 1]]  # (N_rand, 3)
-                batch_rays = torch.stack([rays_o, rays_d], 0)
-                target_rgb = target[select_coords[:, 0], 
+                        select_coords = coords[select_inds].long()  # (N_rand, 2)
+                    
+                    rays_o = rays_o[select_coords[:, 0], 
                                     select_coords[:, 1]]  # (N_rand, 3)
-                target_depth = depth_gt[select_coords[:, 0], 
-                                    select_coords[:, 1]]
-                target_mask = mask_gt[select_coords[:, 0], 
-                                    select_coords[:, 1]].unsqueeze(-1)
-
-                target_of_fwd = flow_fwd[select_coords[:, 0], 
+                    rays_d = rays_d[select_coords[:, 0], 
+                                    select_coords[:, 1]]  # (N_rand, 3)
+                    batch_rays = torch.stack([rays_o, rays_d], 0)
+                    target_rgb = target[select_coords[:, 0], 
+                                        select_coords[:, 1]]  # (N_rand, 3)
+                    target_depth = depth_gt[select_coords[:, 0], 
                                         select_coords[:, 1]]
-                target_fwd_mask = fwd_mask[select_coords[:, 0], 
-                                        select_coords[:, 1]].unsqueeze(-1)#.repeat(1, 2)
+                    target_mask = mask_gt[select_coords[:, 0], 
+                                        select_coords[:, 1]].unsqueeze(-1)
 
-                target_of_bwd = flow_bwd[select_coords[:, 0], 
-                                        select_coords[:, 1]]
-                target_bwd_mask = bwd_mask[select_coords[:, 0], 
-                                        select_coords[:, 1]].unsqueeze(-1)#.repeat(1, 2)
+                    target_of_fwd = flow_fwd[select_coords[:, 0], 
+                                            select_coords[:, 1]]
+                    target_fwd_mask = fwd_mask[select_coords[:, 0], 
+                                            select_coords[:, 1]].unsqueeze(-1)#.repeat(1, 2)
+
+                    target_of_bwd = flow_bwd[select_coords[:, 0], 
+                                            select_coords[:, 1]]
+                    target_bwd_mask = bwd_mask[select_coords[:, 0], 
+                                            select_coords[:, 1]].unsqueeze(-1)#.repeat(1, 2)
 
             img_idx_embed = img_i/num_img * 2. - 1.0
 

@@ -14,17 +14,14 @@ import tinycudann as tcnn
 import json
 import nvtx
 
-import nvtx
-
 class CutlassNeRF(nn.Module):
-    def __init__(self, D=8, W=256, input_ch=3, input_ch_views=3, output_ch=4, skips=[4], use_viewdirs=False):
+    def __init__(self, D=8, W=256, input_ch=3, input_ch_views=3, output_ch=4, skips=[4]):
         super(CutlassNeRF, self).__init__()
         self.D = D
         self.W = W
         self.input_ch = input_ch
         self.input_ch_views = input_ch_views
         self.skips = skips
-        self.use_viewdirs = use_viewdirs
 
         # To simplify implementation, we will assume skips = [4]
         if skips != [4]:
@@ -49,19 +46,16 @@ class CutlassNeRF(nn.Module):
         # "An additional layer outputs the volume density σ..."
         self.density_linear = nn.Linear(W, 1)
 
-        if use_viewdirs:
-            #  ... and a 256-dimensional feature vector."
-            self.feature_linear = nn.Linear(W, W)
+        #  ... and a 256-dimensional feature vector."
+        self.feature_linear = nn.Linear(W, W)
 
-            # "This feature vector is concatenated with the positional encoding of the input viewing direction (γ(d)),
-            #  and is processed by an additional fully-connected ReLU layer with 128 channels."
-            self.views_linear = nn.Linear(input_ch_views + W, W//2)
+        # "This feature vector is concatenated with the positional encoding of the input viewing direction (γ(d)),
+        #  and is processed by an additional fully-connected ReLU layer with 128 channels."
+        self.views_linear = nn.Linear(input_ch_views + W, W//2)
 
-            # "A final layer (with a sigmoid activation) outputs the emitted RGB radiance at position x,
-            #  as viewed by a ray with direction d." NOTE: sigmoid is happening in raw2outputs()
-            self.rgb_linear = nn.Linear(W//2, 3)
-        else:
-            self.rgb_linear = nn.Linear(W, 3)
+        # "A final layer (with a sigmoid activation) outputs the emitted RGB radiance at position x,
+        #  as viewed by a ray with direction d." NOTE: sigmoid is happening in raw2outputs()
+        self.rgb_linear = nn.Linear(W//2, 3)
 
     @nvtx.annotate("NeRF Forward")
     def forward(self, x):
@@ -73,20 +67,17 @@ class CutlassNeRF(nn.Module):
         # "An additional layer outputs the volume density σ..."
         density = self.density_linear(h)
 
-        if self.use_viewdirs:
-            #  ... and a 256-dimensional feature vector."
-            feature = self.feature_linear(h)
+        #  ... and a 256-dimensional feature vector."
+        feature = self.feature_linear(h)
 
-            # This feature vector is concatenated with the positional encoding of the input viewing direction (γ(d)),
-            # and is processed by an additional fully-connected ReLU layer with 128 channels.
-            x = torch.cat([feature, input_viewdir.half()], -1)
-            x = F.relu(self.views_linear(x))
+        # This feature vector is concatenated with the positional encoding of the input viewing direction (γ(d)),
+        # and is processed by an additional fully-connected ReLU layer with 128 channels.
+        x = torch.cat([feature, input_viewdir.half()], -1)
+        x = F.relu(self.views_linear(x))
 
-            # "A final layer (with a sigmoid activation) outputs the emitted RGB radiance at position x,
-            #  as viewed by a ray with direction d."
-            rgb = self.rgb_linear(x)
-        else:
-            rgb = self.rgb_linear(h)
+        # "A final layer (with a sigmoid activation) outputs the emitted RGB radiance at position x,
+        #  as viewed by a ray with direction d."
+        rgb = self.rgb_linear(x)
 
         return h, rgb, density
 
@@ -94,8 +85,8 @@ class CutlassNeRF(nn.Module):
 # Dynamic NeRF model for dynamic portions of the scene
 # Generates additional scene flow field vectors and an disocclusion blending factor
 class CutlassDynamicNeRF(CutlassNeRF):
-    def __init__(self, D=8, W=256, input_ch=3, input_ch_views=3, output_ch=4, skips=[4], use_viewdirs=True):
-        super(CutlassDynamicNeRF, self).__init__(D, W, input_ch, input_ch_views, output_ch, skips, use_viewdirs)
+    def __init__(self, D=8, W=256, input_ch=3, input_ch_views=3, output_ch=4, skips=[4]):
+        super(CutlassDynamicNeRF, self).__init__(D, W, input_ch, input_ch_views, output_ch, skips)
 
         self.scene_flow_linear = nn.Linear(W, 6, dtype=torch.float16)
         self.disocclusion_linear = nn.Linear(W, 2, dtype=torch.float16)
@@ -110,8 +101,8 @@ class CutlassDynamicNeRF(CutlassNeRF):
         return torch.cat([rgb, density, scene_flow, disocclusion_blend], dim=-1)
 
 class CutlassStaticNeRF(CutlassNeRF):
-    def __init__(self, D=8, W=256, input_ch=3, input_ch_views=3, output_ch=4, skips=[4], use_viewdirs=True):
-        super(CutlassStaticNeRF, self).__init__(D, W, input_ch, input_ch_views, output_ch, skips, use_viewdirs)
+    def __init__(self, D=8, W=256, input_ch=3, input_ch_views=3, output_ch=4, skips=[4]):
+        super(CutlassStaticNeRF, self).__init__(D, W, input_ch, input_ch_views, output_ch, skips)
 
         self.blending_linear = nn.Linear(W, 1, dtype=torch.float16)
 

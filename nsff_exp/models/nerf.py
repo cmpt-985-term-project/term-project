@@ -8,14 +8,13 @@ import nvtx
 # Base NeRF model - returns RGB and Density values, as well as an intermediate output for processing
 # by the Scene Flow Field part of the Dynamic NeRF model
 class BaseNeRF(nn.Module):
-    def __init__(self, D=8, W=256, input_ch=3, input_ch_views=3, output_ch=4, skips=[4], use_viewdirs=False):
+    def __init__(self, D=8, W=256, input_ch=3, input_ch_views=3, output_ch=4, skips=[4]):
         super(BaseNeRF, self).__init__()
         self.D = D
         self.W = W
         self.input_ch = input_ch
         self.input_ch_views = input_ch_views
         self.skips = skips
-        self.use_viewdirs = use_viewdirs
 
         # "We follow the DeepSDF [32] architecture and include a skip connection that concatenates this input to the fifth layer’s activation"
         self.pts_linears = nn.ModuleList(
@@ -24,19 +23,16 @@ class BaseNeRF(nn.Module):
         # "An additional layer outputs the volume density σ..."
         self.density_linear = nn.Linear(W, 1)
 
-        if use_viewdirs:
-            #  ... and a 256-dimensional feature vector."
-            self.feature_linear = nn.Linear(W, W)
+        #  ... and a 256-dimensional feature vector."
+        self.feature_linear = nn.Linear(W, W)
 
-            # "This feature vector is concatenated with the positional encoding of the input viewing direction (γ(d)),
-            #  and is processed by an additional fully-connected ReLU layer with 128 channels."
-            self.views_linear = nn.Linear(input_ch_views + W, W//2)
+        # "This feature vector is concatenated with the positional encoding of the input viewing direction (γ(d)),
+        #  and is processed by an additional fully-connected ReLU layer with 128 channels."
+        self.views_linear = nn.Linear(input_ch_views + W, W//2)
 
-            # "A final layer (with a sigmoid activation) outputs the emitted RGB radiance at position x,
-            #  as viewed by a ray with direction d."
-            self.rgb_linear = nn.Linear(W//2, 3)
-        else:
-            self.rgb_linear = nn.Linear(W, 3)
+        # "A final layer (with a sigmoid activation) outputs the emitted RGB radiance at position x,
+        #  as viewed by a ray with direction d."
+        self.rgb_linear = nn.Linear(W//2, 3)
 
     @nvtx.annotate("NeRF Forward")
     def forward(self, x):
@@ -54,28 +50,25 @@ class BaseNeRF(nn.Module):
         # "An additional layer outputs the volume density σ..."
         density = self.density_linear(h)
 
-        if self.use_viewdirs:
-            #  ... and a 256-dimensional feature vector."
-            feature = self.feature_linear(h)
+        #  ... and a 256-dimensional feature vector."
+        feature = self.feature_linear(h)
 
-            # This feature vector is concatenated with the positional encoding of the input viewing direction (γ(d)),
-            # and is processed by an additional fully-connected ReLU layer with 128 channels.
-            x = torch.cat([feature, input_viewdir], -1)
-            x = F.relu(self.views_linear(x))
+        # This feature vector is concatenated with the positional encoding of the input viewing direction (γ(d)),
+        # and is processed by an additional fully-connected ReLU layer with 128 channels.
+        x = torch.cat([feature, input_viewdir], -1)
+        x = F.relu(self.views_linear(x))
 
-            # "A final layer (with a sigmoid activation) outputs the emitted RGB radiance at position x,
-            #  as viewed by a ray with direction d."
-            rgb = self.rgb_linear(x)
-        else:
-            rgb = self.rgb_linear(h)
+        # "A final layer (with a sigmoid activation) outputs the emitted RGB radiance at position x,
+        #  as viewed by a ray with direction d."
+        rgb = self.rgb_linear(x)
 
         return h, rgb, density
 
 # Dynamic NeRF model for dynamic portions of the scene
 # Generates additional scene flow field vectors and an disocclusion blending factor
 class DynamicNeRF(BaseNeRF):
-    def __init__(self, D=8, W=256, input_ch=3, input_ch_views=3, output_ch=4, skips=[4], use_viewdirs=True):
-        super(DynamicNeRF, self).__init__(D, W, input_ch, input_ch_views, output_ch, skips, use_viewdirs)
+    def __init__(self, D=8, W=256, input_ch=3, input_ch_views=3, output_ch=4, skips=[4]):
+        super(DynamicNeRF, self).__init__(D, W, input_ch, input_ch_views, output_ch, skips)
 
         self.scene_flow_linear = nn.Linear(W, 6)
         self.disocclusion_linear = nn.Linear(W, 2)
@@ -92,8 +85,8 @@ class DynamicNeRF(BaseNeRF):
 # Static  NeRF model for static portions of the scene
 # Adds an additional "blending" weight to blend the static and dynamic portions of a scene
 class StaticNeRF(BaseNeRF):
-    def __init__(self, D=8, W=256, input_ch=3, input_ch_views=3, output_ch=4, skips=[4], use_viewdirs=True):
-        super(StaticNeRF, self).__init__(D, W, input_ch, input_ch_views, output_ch, skips, use_viewdirs)
+    def __init__(self, D=8, W=256, input_ch=3, input_ch_views=3, output_ch=4, skips=[4]):
+        super(StaticNeRF, self).__init__(D, W, input_ch, input_ch_views, output_ch, skips)
 
         self.blending_linear = nn.Linear(W, 1)
 
