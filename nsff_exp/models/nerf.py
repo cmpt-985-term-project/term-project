@@ -1,7 +1,6 @@
 import torch
 torch.autograd.set_detect_anomaly(False)
 import torch.nn as nn
-import torch.nn.functional as F
 
 import nvtx
 
@@ -29,115 +28,110 @@ class PositionalEncoder(nn.Module):
         self.embed_fns = embed_fns
         self.out_channels = out_channels
 
-    @nvtx.annotate("Positional encoding")
     def forward(self, inputs):
         return torch.cat([fn(inputs) for fn in self.embed_fns], -1)
 
 
-# Base NeRF model - returns RGB and Density values, as well as an intermediate output for processing
-# by the Scene Flow Field part of the Dynamic NeRF model
-class BaseNeRF(nn.Module):
-    def __init__(self, position_channels, view_channels, position_encoding_degrees, view_encoding_degrees):
-        super(BaseNeRF, self).__init__()
+# A "Density" (not view-angle dependent) MLP
+class DensityMLP(nn.Module):
+    def __init__(self, in_channels, out_channels, degrees=10):
+        super(DensityMLP, self).__init__()
 
-        self.position_channels = position_channels
-        self.view_channels = view_channels
-
-        # In the original code, these parameters were passed into constructor, but they never changed.
-        # We will hard-code network parameters, based on the specific NeRF implementation.
-        D = 8
+        # Network parameters
         W = 256
 
-        # Positional encoding will be used for both position and viewing angle, as in the original NeRF paper
-        # Subsequent implementations used spherical harmonics for viewing angle, which seems better
-        self.position_encoder = PositionalEncoder(position_channels, position_encoding_degrees)
-        self.view_encoder = PositionalEncoder(view_channels, view_encoding_degrees)
-
-        self.encoded_position_channels = self.position_encoder.out_channels
-        self.encoded_view_channels = self.view_encoder.out_channels
+        self.position_encoder = PositionalEncoder(in_channels=in_channels, degrees=degrees)
 
         # "We follow the DeepSDF [32] architecture and include a skip connection that concatenates this input to the fifth layer’s activation"
-        self.skips = [4]
-        self.pts_linears = nn.ModuleList(
-            [nn.Linear(self.encoded_position_channels, W)] + [nn.Linear(W, W) if i not in self.skips else nn.Linear(W + self.encoded_position_channels, W) for i in range(D-1)])
+        self.model_part1 = nn.Sequential(
+            nn.Linear(self.position_encoder.out_channels, W), nn.ReLU(inplace=True),
+            nn.Linear(W, W), nn.ReLU(inplace=True),
+            nn.Linear(W, W), nn.ReLU(inplace=True),
+            nn.Linear(W, W), nn.ReLU(inplace=True)
+        )
+        self.model_part2 = nn.Sequential(
+            nn.Linear(W + self.position_encoder.out_channels, W), nn.ReLU(inplace=True),
+            nn.Linear(W, W), nn.ReLU(inplace=True),
+            nn.Linear(W, W), nn.ReLU(inplace=True),
+            nn.Linear(W, W), nn.ReLU(inplace=True),
+            nn.Linear(W, out_channels)
+        )
 
-        # "An additional layer outputs the volume density σ..."
-        self.density_linear = nn.Linear(W, 1)
-
-        #  ... and a 256-dimensional feature vector."
-        self.feature_linear = nn.Linear(W, W)
-
-        # "This feature vector is concatenated with the positional encoding of the input viewing direction (γ(d)),
-        #  and is processed by an additional fully-connected ReLU layer with 128 channels."
-        self.views_linear = nn.Linear(self.encoded_view_channels + W, W//2)
-
-        # "A final layer (with a sigmoid activation) outputs the emitted RGB radiance at position x,
-        #  as viewed by a ray with direction d."
-        self.rgb_linear = nn.Linear(W//2, 3)
-
-    @nvtx.annotate("NeRF Forward")
     def forward(self, x):
-        input_position, input_view = torch.split(x, [self.position_channels, self.view_channels], dim=-1)
+        encoded_position = self.position_encoder(x)
+        part1 = self.model_part1(encoded_position)
+        part2 = self.model_part2(torch.cat([encoded_position, part1], dim=-1))
+        return part2
 
-        # The positional encoding of the input location (γ(x)) is passed through 8 fully-connected ReLU layers, each with 256 channels.
-        # We follow the DeepSDF [32] architecture and include a skip connection that concatenates this input to the fifth layer’s activation.
-        encoded_position = self.position_encoder(input_position)
-        h = encoded_position
-        for i, l in enumerate(self.pts_linears):
-            h = self.pts_linears[i](h)
-            h = F.relu(h)
-            if i in self.skips:
-                h = torch.cat([encoded_position, h], -1)
+# An "Color" (view-angle dependent) MLP
+class ColorMLP(nn.Module):
+    def __init__(self, degrees=4):
+        super(ColorMLP, self).__init__()
 
-        # "An additional layer outputs the volume density σ..."
-        density = self.density_linear(h)
+        # For consistency with original paper, we will use the position encoder on the viewing angle,
+        # even though a spherical harmonic encoder makes more sense.
+        self.view_encoder = PositionalEncoder(in_channels=3, degrees=degrees)
 
-        #  ... and a 256-dimensional feature vector."
-        feature = self.feature_linear(h)
+        self.model = nn.Sequential(
+            nn.Linear(self.view_encoder.out_channels + 256, 128), nn.ReLU(inplace=True),
+            nn.Linear(128, 3)
+        )
 
-        # This feature vector is concatenated with the positional encoding of the input viewing direction (γ(d)),
-        # and is processed by an additional fully-connected ReLU layer with 128 channels.
+    def forward(self, x):
+        input_view, feature_vector = x.split([3, 256], dim=-1)
         encoded_view = self.view_encoder(input_view)
-        x = torch.cat([feature, encoded_view], -1)
-        x = F.relu(self.views_linear(x))
+        return self.model(torch.cat([encoded_view, feature_vector], dim=-1))
 
-        # "A final layer (with a sigmoid activation) outputs the emitted RGB radiance at position x,
-        #  as viewed by a ray with direction d."
-        rgb = self.rgb_linear(x)
-
-        return h, rgb, density
 
 # Dynamic NeRF model for dynamic portions of the scene
 # Generates additional scene flow field vectors and an disocclusion blending factor
-class DynamicNeRF(BaseNeRF):
+class DynamicNeRF(nn.Module):
     def __init__(self):
-        super(DynamicNeRF, self).__init__(position_channels=4, view_channels=3, position_encoding_degrees=10, view_encoding_degrees=4)
-        W = 256
+        super(DynamicNeRF, self).__init__()
 
-        self.scene_flow_linear = nn.Linear(W, 6)
-        self.disocclusion_linear = nn.Linear(W, 2)
+        # 24 channels = scene flow (2 x 3-dim) + disocclusion weights (2 x 1-dim) + density and feature vector (256-dim)
+        self.density_mlp = DensityMLP(in_channels=4, out_channels=264)
+        self.color_mlp = ColorMLP()
 
-    @nvtx.annotate("DynamicNeRF forward")
+    @nvtx.annotate("Dynamic NeRF forward")
     def forward(self, x):
-        h, rgb, density = super().forward(x)
+        # 4 input channels, 3 view channels
+        input_position, input_view = x.split([4, 3], dim=-1)
+        x = self.density_mlp(input_position)
 
-        scene_flow = F.tanh(self.scene_flow_linear(h))
-        disocclusion_blend = F.sigmoid(self.disocclusion_linear(h))
+        # 2 x 3-dim scene flow, 2 x 1-dim disocclusion blend, 256-dim feature vector
+        scene_flow, disocclusion_blend, feature_vector = torch.split(x, [6, 2, 256], dim=1)
+
+        scene_flow = torch.tanh(scene_flow)
+        disocclusion_blend = torch.sigmoid(disocclusion_blend)
+        density = feature_vector[:, 0:1]
+
+        rgb = self.color_mlp(torch.cat([input_view, feature_vector], dim=-1))
 
         return torch.cat([rgb, density, scene_flow, disocclusion_blend], dim=-1)
 
-# Static  NeRF model for static portions of the scene
+# Static NeRF model for static portions of the scene
 # Adds an additional "blending" weight to blend the static and dynamic portions of a scene
-class StaticNeRF(BaseNeRF):
+class StaticNeRF(nn.Module):
     def __init__(self):
-        super(StaticNeRF, self).__init__(position_channels=3, view_channels=3, position_encoding_degrees=10, view_encoding_degrees=4)
-        W = 256
+        super(StaticNeRF, self).__init__()
 
-        self.blending_linear = nn.Linear(W, 1)
+        # 17 channels = static/dynamic blending weight (1-dim) + density and feature vector (256-dim)
+        self.density_mlp = DensityMLP(in_channels=3, out_channels=257)
+        self.color_mlp = ColorMLP()
 
-    @nvtx.annotate("StaticNeRF forward")
+    @nvtx.annotate("Static NeRF forward")
     def forward(self, x):
-        h, rgb, density = super().forward(x)
-        blending = F.sigmoid(self.blending_linear(h))
+        # 3 input channels, 3 view channels
+        input_position, input_view = x.split([3, 3], dim=-1)
+        x = self.density_mlp(input_position)
+
+        # 1-dim blending weight, 256-dim feature vector
+        blending, feature_vector = x.split([1, 256], dim=-1)
+
+        blending = torch.sigmoid(blending)
+        density = feature_vector[:, 0:1]
+
+        rgb = self.color_mlp(torch.cat([input_view, feature_vector], dim=-1))
 
         return torch.cat([rgb, density, blending], dim=-1)
