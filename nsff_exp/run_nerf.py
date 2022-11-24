@@ -690,31 +690,31 @@ def train():
                     # render_flow_fwd_rgb = torch.Tensor(flow_to_image(render_of_fwd.cpu().numpy())/255.)#.cuda()
                     # render_flow_bwd_rgb = torch.Tensor(flow_to_image(render_of_bwd.cpu().numpy())/255.)#.cuda()
                     
-                    writer.add_image("val/rgb_map_ref", torch.clamp(ret['rgb_map_ref'], 0., 1.), 
+                    writer.add_image("predicted_rgb", torch.clamp(ret['rgb_map_ref'], 0., 1.),
                                     global_step=i, dataformats='HWC')
-                    writer.add_image("val/depth_map_ref", normalize_depth(ret['depth_map_ref']), 
+                    writer.add_image("predicted_depth", normalize_depth(ret['depth_map_ref']),
                                     global_step=i, dataformats='HW')
 
-                    writer.add_image("val/rgb_map_static", torch.clamp(ret['rgb_map_rig'], 0., 1.),
+                    writer.add_image("static_model_rgb", torch.clamp(ret['rgb_map_rig'], 0., 1.),
                                     global_step=i, dataformats='HWC')
-                    writer.add_image("val/depth_map_static", normalize_depth(ret['depth_map_rig']),
+                    writer.add_image("static_model_depth", normalize_depth(ret['depth_map_rig']),
                                     global_step=i, dataformats='HW')
 
-                    writer.add_image("val/rgb_map_ref_dy", torch.clamp(ret['rgb_map_ref_dy'], 0., 1.),
+                    writer.add_image("dynamic_model_rgb", torch.clamp(ret['rgb_map_ref_dy'], 0., 1.),
                                     global_step=i, dataformats='HWC')
-                    writer.add_image("val/depth_map_ref_dy", normalize_depth(ret['depth_map_ref_dy']),
+                    writer.add_image("dynamic_model_depth", normalize_depth(ret['depth_map_ref_dy']),
                                     global_step=i, dataformats='HW')
 
                     # writer.add_image("val/rgb_map_pp_dy", torch.clamp(ret['rgb_map_pp_dy'], 0., 1.), 
                                     # global_step=i, dataformats='HWC')
 
-                    writer.add_image("val/gt_rgb", target,
+                    writer.add_image("ground_truth_rgb", target,
                                     global_step=i, dataformats='HWC')
-                    writer.add_image("val/monocular_disp",
+                    writer.add_image("ground_truth_monocular_disp",
                                     torch.clamp(target_depth /percentile(target_depth, 97), 0., 1.),
                                     global_step=i, dataformats='HW')
 
-                    writer.add_image("val/weights_map_dd",
+                    writer.add_image("static_dynamic_weights",
                                     ret['weights_map_dd'],
                                     global_step=i,
                                     dataformats='HW')
