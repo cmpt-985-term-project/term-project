@@ -163,7 +163,7 @@ def config_parser():
 
     # CMPT-985 Term Project Options...
     parser.add_argument('--nerf_model', type=str, default='PyTorch',
-                        help='NeRF architecture. Either Pytorch or CutlassMLP')
+                        help='NeRF architecture. Either Pytorch, FusedMLP, or CutlassMLP')
     parser.add_argument("--allow_tf32", action='store_true',
                         help='Enable TF32 tensor cores for matrix multiplication')
     parser.add_argument("--enable_fused_adam", action='store_true',
@@ -491,7 +491,6 @@ def train():
                                         target_rgb, 
                                         weight_map_prev.unsqueeze(-1))
             else:
-                print('only compute dynamic render loss in masked region')
                 weights_map_dd = ret['weights_map_dd'].unsqueeze(-1).detach()
 
                 # dynamic rendering loss
@@ -588,7 +587,6 @@ def train():
                                                             H, W, focal)
 
             if chain_5frames:
-                print('5 FRAME RENDER LOSS ADDED') 
                 render_loss += compute_mse(ret['rgb_map_pp_dy'], 
                                         target_rgb, 
                                         weights_map_dd)

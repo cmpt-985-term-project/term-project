@@ -9,6 +9,7 @@ from run_nerf_helpers import *
 
 from models.nerf import StaticNeRF, DynamicNeRF
 from models.cutlass_nerf import CutlassStaticNeRF, CutlassDynamicNeRF
+from models.fused_nerf import FusedStaticNeRF, FusedDynamicNeRF
 
 import nvtx
 
@@ -671,11 +672,11 @@ def create_nerf(args):
         model = DynamicNeRF().to(device)
         model_rigid = StaticNeRF().to(device)
     elif args.nerf_model == 'CutlassMLP':
-        dynamic_model_class = CutlassDynamicNeRF
-        static_model_class = CutlassStaticNeRF
+        model = CutlassDynamicNeRF()
+        model_rigid = CutlassStaticNeRF()
     elif args.nerf_model == 'FusedMLP':
-        dynamic_model_class = CutlassDynamicNeRF
-        static_model_class = CutlassStaticNeRF
+        model = FusedDynamicNeRF()
+        model_rigid = FusedStaticNeRF()
     else:
         raise ValueError(f'Unknown NeRF model type: {args.nerf_model}')
 
