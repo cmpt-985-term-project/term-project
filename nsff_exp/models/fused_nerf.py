@@ -29,56 +29,61 @@ import nvtx
 
 # A "Density" (not view-angle dependent) MLP
 class FusedDensityMLP(nn.Module):
-    def __init__(self, in_channels, out_channels):
+    def __init__(self, in_channels, out_channels, degrees=10):
         super(FusedDensityMLP, self).__init__()
 
-        # Hash encoding -- needs more investigation...
-        #encoding_config = json.loads('''
-        #    {"otype":"Grid", "type":"Hash", "n_levels":16, "n_features_per_level":2, "log2_hashmap_size":19,
-        #     "base_resolution":16, "per_level_scale": 2.0, "interpolation": "Linear"}''')
+        # Network parameters
+        self.W = 128
 
-        # Frequency encoding
-        encoding_config = json.loads('{"otype":"Frequency", "n_frequencies":10}')
+        encoding_config = json.loads(f'{"otype":"Frequency", "n_frequencies":{degrees}}')
+        self.position_encoder = tcnn.Encoding(n_input_dims=in_channels, encoding_config=encoding_config)
 
-        network_config = json.loads('''
-            {"otype":"FullyFusedMLP", "activation":"ReLU", "output_activation":"None", "n_neurons":64,
+        network_config1 = json.loads(f'''
+            {"otype":"FullyFusedMLP", "activation":"ReLU", "output_activation":"None", "n_neurons":{self.W},
+             "n_hidden_layers":2, "feedback_alignment":false}''')
+        self.model_part1 = tcnn.Network(n_input_dims=self.position_encoder.n_output_dims, n_output_dims=self.W, network_config=network_config1)
+
+        network_config2 = json.loads(f'''
+            {"otype":"FullyFusedMLP", "activation":"ReLU", "output_activation":"None", "n_neurons":{self.W},
              "n_hidden_layers":3, "feedback_alignment":false}''')
-
-        self.network = tcnn.NetworkWithInputEncoding(n_input_dims=in_channels, n_output_dims=out_channels,
-                                                     encoding_config=encoding_config, network_config=network_config)
+        self.model_part2 = tcnn.Network(n_input_dims=self.W + self.position_encoder.n_output_dims, n_output_dims=out_channels, network_config=network_config2)
 
     def forward(self, x):
-        return self.network(x)
+        encoded_position = self.position_encoder(x)
+        part1 = self.model_part1(encoded_position)
+        part2 = self.model_part2(torch.cat([encoded_position, part1], dim=-1))
+        return part2
 
 # An "Color" (view-angle dependent) MLP
 class FusedColorMLP(nn.Module):
-    def __init__(self):
+    def __init__(self, degrees=4):
         super(FusedColorMLP, self).__init__()
+        self.W = 128
 
-        encoding_config = json.loads('''
-            {"otype":"Composite", "nested": [
-                {"n_dims_to_encode":3, "otype":"SphericalHarmonics", "degree":4},
-                {"otype":"Identity"}
-            ]}''')
+        # For consistency with original paper, we will use the position encoder on the viewing angle,
+        # even though a spherical harmonic encoder makes more sense.
+        encoding_config = json.loads(f'{"otype":"Frequency", "n_frequencies":{degrees}}')
+        self.view_encoder = tcnn.Encoding(n_input_dims=3, encoding_config=encoding_config)
 
-        network_config = json.loads('''
-            {"otype":"FullyFusedMLP", "activation":"ReLU", "output_activation":"None", "n_neurons":64,
-             "n_hidden_layers":2, "feedback_alignment":false}''')
-
-        # 3 view direction dims, 16 feature dims
-        self.network = tcnn.NetworkWithInputEncoding(n_input_dims=19, n_output_dims=3,
-                                                     encoding_config=encoding_config, network_config=network_config)
+        network_config = json.loads(f'''
+            {"otype":"FullyFusedMLP", "activation":"ReLU", "output_activation":"None", "n_neurons":{self.W},
+             "n_hidden_layers":1, "feedback_alignment":false}''')
+        self.model = tcnn.Network(n_input_dims=self.view_encoder.n_output_dims + self.W, n_output_dims=3, network_config=network_config)
 
     def forward(self, x):
-        return self.network(x)
+        input_view, feature_vector = x.split([3, self.W], dim=-1)
+        encoded_view = self.view_encoder(input_view)
+        return self.model(torch.cat([encoded_view, feature_vector], dim=-1))
+
 
 # Dynamic NeRF model for dynamic portions of the scene
 class FusedDynamicNeRF(nn.Module):
     def __init__(self):
         super(FusedDynamicNeRF, self).__init__()
+        self.W = 128
 
-        # 24 channels = scene flow (2 x 3-dim) + disocclusion weights (2 x 1-dim) + density and feature vector (16-dim)
-        self.density_mlp = FusedDensityMLP(in_channels=4, out_channels=24)
+        # 24 channels = scene flow (2 x 3-dim) + disocclusion weights (2 x 1-dim) + density and feature vector (128-dim)
+        self.density_mlp = FusedDensityMLP(in_channels=4, out_channels=self.W + 8)
         self.color_mlp = FusedColorMLP()
 
     @nvtx.annotate("Fused Dynamic NeRF forward")
@@ -87,8 +92,8 @@ class FusedDynamicNeRF(nn.Module):
         input_position, input_view = x.split([4, 3], dim=-1)
         x = self.density_mlp(input_position)
 
-        # 2 x 3-dim scene flow, 2 x 1-dim disocclusion blend, 16-dim feature vector
-        scene_flow, disocclusion_blend, feature_vector = torch.split(x, [6, 2, 16], dim=1)
+        # 2 x 3-dim scene flow, 2 x 1-dim disocclusion blend, 128-dim feature vector
+        scene_flow, disocclusion_blend, feature_vector = torch.split(x, [6, 2, self.W], dim=-1)
 
         scene_flow = torch.tanh(scene_flow)
         disocclusion_blend = torch.sigmoid(disocclusion_blend)
@@ -102,9 +107,10 @@ class FusedDynamicNeRF(nn.Module):
 class FusedStaticNeRF(nn.Module):
     def __init__(self):
         super(FusedStaticNeRF, self).__init__()
+        self.W = 128
 
-        # 17 channels = static/dynamic blending weight (1-dim) + density and feature vector (16-dim)
-        self.density_mlp = FusedDensityMLP(in_channels=3, out_channels=17)
+        # 17 channels = static/dynamic blending weight (1-dim) + density and feature vector (128-dim)
+        self.density_mlp = FusedDensityMLP(in_channels=3, out_channels=self.W+1)
         self.color_mlp = FusedColorMLP()
 
     @nvtx.annotate("Fused Static NeRF forward")
@@ -113,8 +119,8 @@ class FusedStaticNeRF(nn.Module):
         input_position, input_view = x.split([3, 3], dim=-1)
         x = self.density_mlp(input_position)
 
-        # 1-dim blending weight, 16-dim feature vector
-        blending, feature_vector = torch.split(x, [1, 16], dim=1)
+        # 1-dim blending weight, 128-dim feature vector
+        blending, feature_vector = x.split([1, self.W], dim=-1)
 
         blending = torch.sigmoid(blending)
         density = feature_vector[:, 0:1]

@@ -38,23 +38,23 @@ class DensityMLP(nn.Module):
         super(DensityMLP, self).__init__()
 
         # Network parameters
-        W = 256
+        self.W = 256
 
         self.position_encoder = PositionalEncoder(in_channels=in_channels, degrees=degrees)
 
         # "We follow the DeepSDF [32] architecture and include a skip connection that concatenates this input to the fifth layer’s activation"
         self.model_part1 = nn.Sequential(
-            nn.Linear(self.position_encoder.out_channels, W), nn.ReLU(inplace=True),
-            nn.Linear(W, W), nn.ReLU(inplace=True),
-            nn.Linear(W, W), nn.ReLU(inplace=True),
-            nn.Linear(W, W), nn.ReLU(inplace=True)
+            nn.Linear(self.position_encoder.out_channels, self.W), nn.ReLU(inplace=True),
+            nn.Linear(self.W, self.W), nn.ReLU(inplace=True),
+            nn.Linear(self.W, self.W), nn.ReLU(inplace=True),
+            nn.Linear(self.W, self.W), nn.ReLU(inplace=True)
         )
         self.model_part2 = nn.Sequential(
-            nn.Linear(W + self.position_encoder.out_channels, W), nn.ReLU(inplace=True),
-            nn.Linear(W, W), nn.ReLU(inplace=True),
-            nn.Linear(W, W), nn.ReLU(inplace=True),
-            nn.Linear(W, W), nn.ReLU(inplace=True),
-            nn.Linear(W, out_channels)
+            nn.Linear(self.W + self.position_encoder.out_channels, self.W), nn.ReLU(inplace=True),
+            nn.Linear(self.W, self.W), nn.ReLU(inplace=True),
+            nn.Linear(self.W, self.W), nn.ReLU(inplace=True),
+            nn.Linear(self.W, self.W), nn.ReLU(inplace=True),
+            nn.Linear(self.W, out_channels)
         )
 
     def forward(self, x):
@@ -67,18 +67,19 @@ class DensityMLP(nn.Module):
 class ColorMLP(nn.Module):
     def __init__(self, degrees=4):
         super(ColorMLP, self).__init__()
+        self.W = 256
 
         # For consistency with original paper, we will use the position encoder on the viewing angle,
         # even though a spherical harmonic encoder makes more sense.
         self.view_encoder = PositionalEncoder(in_channels=3, degrees=degrees)
 
         self.model = nn.Sequential(
-            nn.Linear(self.view_encoder.out_channels + 256, 128), nn.ReLU(inplace=True),
-            nn.Linear(128, 3)
+            nn.Linear(self.view_encoder.out_channels + self.W, self.W), nn.ReLU(inplace=True),
+            nn.Linear(self.W, 3)
         )
 
     def forward(self, x):
-        input_view, feature_vector = x.split([3, 256], dim=-1)
+        input_view, feature_vector = x.split([3, self.W], dim=-1)
         encoded_view = self.view_encoder(input_view)
         return self.model(torch.cat([encoded_view, feature_vector], dim=-1))
 
@@ -88,9 +89,10 @@ class ColorMLP(nn.Module):
 class DynamicNeRF(nn.Module):
     def __init__(self):
         super(DynamicNeRF, self).__init__()
+        self.W = 256
 
         # 24 channels = scene flow (2 x 3-dim) + disocclusion weights (2 x 1-dim) + density and feature vector (256-dim)
-        self.density_mlp = DensityMLP(in_channels=4, out_channels=264)
+        self.density_mlp = DensityMLP(in_channels=4, out_channels=self.W + 8)
         self.color_mlp = ColorMLP()
 
     @nvtx.annotate("Dynamic NeRF forward")
@@ -100,7 +102,7 @@ class DynamicNeRF(nn.Module):
         x = self.density_mlp(input_position)
 
         # 2 x 3-dim scene flow, 2 x 1-dim disocclusion blend, 256-dim feature vector
-        scene_flow, disocclusion_blend, feature_vector = torch.split(x, [6, 2, 256], dim=1)
+        scene_flow, disocclusion_blend, feature_vector = torch.split(x, [6, 2, self.W], dim=-1)
 
         scene_flow = torch.tanh(scene_flow)
         disocclusion_blend = torch.sigmoid(disocclusion_blend)
@@ -115,9 +117,10 @@ class DynamicNeRF(nn.Module):
 class StaticNeRF(nn.Module):
     def __init__(self):
         super(StaticNeRF, self).__init__()
+        self.W = 256
 
         # 17 channels = static/dynamic blending weight (1-dim) + density and feature vector (256-dim)
-        self.density_mlp = DensityMLP(in_channels=3, out_channels=257)
+        self.density_mlp = DensityMLP(in_channels=3, out_channels=self.W+1)
         self.color_mlp = ColorMLP()
 
     @nvtx.annotate("Static NeRF forward")
@@ -127,7 +130,7 @@ class StaticNeRF(nn.Module):
         x = self.density_mlp(input_position)
 
         # 1-dim blending weight, 256-dim feature vector
-        blending, feature_vector = x.split([1, 256], dim=-1)
+        blending, feature_vector = x.split([1, self.W], dim=-1)
 
         blending = torch.sigmoid(blending)
         density = feature_vector[:, 0:1]
