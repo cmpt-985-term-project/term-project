@@ -327,11 +327,11 @@ def train():
 
     # Prepare raybatch tensor if batching random rays
     N_rand = args.N_rand
-    # Move training data to GPU
-    images = torch.Tensor(images)#.to(device)
-    depths = torch.Tensor(depths)#.to(device)
-    masks = 1.0 - torch.Tensor(masks).to(device)
 
+    # Move training data to GPU
+    images = torch.Tensor(images).to(device)
+    depths = torch.Tensor(depths).to(device)
+    masks = 1.0 - torch.Tensor(masks).to(device)
     poses = torch.Tensor(poses).to(device)
 
     N_iters = args.N_iters
@@ -363,6 +363,7 @@ def train():
             if i % (decay_iteration * 1000) == 0:
                 torch.cuda.empty_cache()
 
+            # TODO: compare performance pre-copying images to GPU or not...
             target = images[img_i].cuda()
             pose = poses[img_i, :3,:4]
             depth_gt = depths[img_i].cuda()

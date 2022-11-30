@@ -22,7 +22,7 @@ class CutlassDensityMLP(nn.Module):
         self.W = 256
 
         encoding_config = json.loads(f'{{"otype":"Frequency", "n_frequencies":{degrees}}}')
-        self.position_encoder = tcnn.Encoding(n_input_dims=in_channels, encoding_config=encoding_config)
+        self.position_encoder = tcnn.Encoding(n_input_dims=in_channels, encoding_config=encoding_config, dtype=torch.float32)
 
         network_config1 = json.loads(f'''
             {{"otype":"CutlassMLP", "activation":"ReLU", "output_activation":"None", "n_neurons":{self.W},
@@ -49,7 +49,7 @@ class CutlassColorMLP(nn.Module):
         # For consistency with original paper, we will use the position encoder on the viewing angle,
         # even though a spherical harmonic encoder makes more sense.
         encoding_config = json.loads(f'{{"otype":"Frequency", "n_frequencies":{degrees}}}')
-        self.view_encoder = tcnn.Encoding(n_input_dims=3, encoding_config=encoding_config)
+        self.view_encoder = tcnn.Encoding(n_input_dims=3, encoding_config=encoding_config, dtype=torch.float32)
 
         network_config = json.loads(f'''
             {{"otype":"CutlassMLP", "activation":"ReLU", "output_activation":"None", "n_neurons":{self.W},
@@ -87,7 +87,7 @@ class CutlassDynamicNeRF(nn.Module):
 
         rgb = self.color_mlp(torch.cat([input_view, feature_vector], dim=-1))
 
-        return torch.cat([rgb, density, scene_flow, disocclusion_blend], dim=-1)
+        return torch.cat([rgb, density, scene_flow, disocclusion_blend], dim=-1).to(dtype=torch.float32)
 
 # Static NeRF model for static portions of the scene
 class CutlassStaticNeRF(nn.Module):
@@ -113,4 +113,4 @@ class CutlassStaticNeRF(nn.Module):
 
         rgb = self.color_mlp(torch.cat([input_view, feature_vector], dim=-1))
 
-        return torch.cat([rgb, density, blending], dim=-1)
+        return torch.cat([rgb, density, blending], dim=-1).to(dtype=torch.float32)

@@ -672,11 +672,11 @@ def create_nerf(args):
         model = DynamicNeRF().to(device)
         model_rigid = StaticNeRF().to(device)
     elif args.nerf_model == 'CutlassMLP':
-        model = CutlassDynamicNeRF()
-        model_rigid = CutlassStaticNeRF()
+        model = CutlassDynamicNeRF().to(device)
+        model_rigid = CutlassStaticNeRF().to(device)
     elif args.nerf_model == 'FusedMLP':
-        model = FusedDynamicNeRF()
-        model_rigid = FusedStaticNeRF()
+        model = FusedDynamicNeRF().to(device)
+        model_rigid = FusedStaticNeRF().to(device)
     else:
         raise ValueError(f'Unknown NeRF model type: {args.nerf_model}')
 
