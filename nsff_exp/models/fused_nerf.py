@@ -35,17 +35,17 @@ class FusedDensityMLP(nn.Module):
         # Network parameters
         self.W = 128
 
-        encoding_config = json.loads(f'{"otype":"Frequency", "n_frequencies":{degrees}}')
+        encoding_config = json.loads(f'{{"otype":"Frequency", "n_frequencies":{degrees}}}')
         self.position_encoder = tcnn.Encoding(n_input_dims=in_channels, encoding_config=encoding_config)
 
         network_config1 = json.loads(f'''
-            {"otype":"FullyFusedMLP", "activation":"ReLU", "output_activation":"None", "n_neurons":{self.W},
-             "n_hidden_layers":2, "feedback_alignment":false}''')
+            {{"otype":"FullyFusedMLP", "activation":"ReLU", "output_activation":"None", "n_neurons":{self.W},
+              "n_hidden_layers":2, "feedback_alignment":false}}''')
         self.model_part1 = tcnn.Network(n_input_dims=self.position_encoder.n_output_dims, n_output_dims=self.W, network_config=network_config1)
 
         network_config2 = json.loads(f'''
-            {"otype":"FullyFusedMLP", "activation":"ReLU", "output_activation":"None", "n_neurons":{self.W},
-             "n_hidden_layers":3, "feedback_alignment":false}''')
+            {{"otype":"FullyFusedMLP", "activation":"ReLU", "output_activation":"None", "n_neurons":{self.W},
+              "n_hidden_layers":3, "feedback_alignment":false}}''')
         self.model_part2 = tcnn.Network(n_input_dims=self.W + self.position_encoder.n_output_dims, n_output_dims=out_channels, network_config=network_config2)
 
     def forward(self, x):
@@ -62,12 +62,12 @@ class FusedColorMLP(nn.Module):
 
         # For consistency with original paper, we will use the position encoder on the viewing angle,
         # even though a spherical harmonic encoder makes more sense.
-        encoding_config = json.loads(f'{"otype":"Frequency", "n_frequencies":{degrees}}')
+        encoding_config = json.loads(f'{{"otype":"Frequency", "n_frequencies":{degrees}}}')
         self.view_encoder = tcnn.Encoding(n_input_dims=3, encoding_config=encoding_config)
 
         network_config = json.loads(f'''
-            {"otype":"FullyFusedMLP", "activation":"ReLU", "output_activation":"None", "n_neurons":{self.W},
-             "n_hidden_layers":1, "feedback_alignment":false}''')
+            {{"otype":"FullyFusedMLP", "activation":"ReLU", "output_activation":"None", "n_neurons":{self.W},
+              "n_hidden_layers":1, "feedback_alignment":false}}''')
         self.model = tcnn.Network(n_input_dims=self.view_encoder.n_output_dims + self.W, n_output_dims=3, network_config=network_config)
 
     def forward(self, x):
