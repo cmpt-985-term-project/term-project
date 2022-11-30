@@ -8,116 +8,109 @@
 import torch
 torch.autograd.set_detect_anomaly(False)
 import torch.nn as nn
-import torch.nn.functional as F
 
 import tinycudann as tcnn
 import json
 import nvtx
 
-import nvtx
+# A "Density" (not view-angle dependent) MLP
+class CutlassDensityMLP(nn.Module):
+    def __init__(self, in_channels, out_channels, degrees=10):
+        super(CutlassDensityMLP, self).__init__()
 
-class CutlassNeRF(nn.Module):
-    def __init__(self, D=8, W=256, input_ch=3, input_ch_views=3, output_ch=4, skips=[4], use_viewdirs=False):
-        super(CutlassNeRF, self).__init__()
-        self.D = D
-        self.W = W
-        self.input_ch = input_ch
-        self.input_ch_views = input_ch_views
-        self.skips = skips
-        self.use_viewdirs = use_viewdirs
+        # Network parameters
+        self.W = 256
 
-        # To simplify implementation, we will assume skips = [4]
-        if skips != [4]:
-            raise "Positional encoding skip connection must be at layer 4 for Cutlass NeRF implementation"
+        encoding_config = json.loads(f'{{"otype":"Frequency", "n_frequencies":{degrees}}}')
+        self.position_encoder = tcnn.Encoding(n_input_dims=in_channels, encoding_config=encoding_config, dtype=torch.float32)
 
-        # Backbone network is split into two 4-layer MLPs
-        half_backbone_json = json.loads(f'''
-        {{
-            "otype": "CutlassMLP",
-            "activation": "ReLU",
-            "output_activation": "ReLU",
-            "n_neurons": {W},
-            "n_hidden_layers": 3,
-            "feedback_alignment": false
-        }}
-        ''')
+        network_config1 = json.loads(f'''
+            {{"otype":"CutlassMLP", "activation":"ReLU", "output_activation":"None", "n_neurons":{self.W},
+              "n_hidden_layers":2}}''')
+        self.model_part1 = tcnn.Network(n_input_dims=self.position_encoder.n_output_dims, n_output_dims=self.W, network_config=network_config1)
 
-        # "We follow the DeepSDF [32] architecture and include a skip connection that concatenates this input to the fifth layer’s activation"
-        self.backbone1 = tcnn.Network(n_input_dims=input_ch, n_output_dims=W, network_config=half_backbone_json)
-        self.backbone2 = tcnn.Network(n_input_dims=(W+input_ch), n_output_dims=W, network_config=half_backbone_json)
+        network_config2 = json.loads(f'''
+            {{"otype":"CutlassMLP", "activation":"ReLU", "output_activation":"None", "n_neurons":{self.W},
+              "n_hidden_layers":3}}''')
+        self.model_part2 = tcnn.Network(n_input_dims=self.W + self.position_encoder.n_output_dims, n_output_dims=out_channels, network_config=network_config2)
 
-        # "An additional layer outputs the volume density σ..."
-        self.density_linear = nn.Linear(W, 1)
-
-        if use_viewdirs:
-            #  ... and a 256-dimensional feature vector."
-            self.feature_linear = nn.Linear(W, W)
-
-            # "This feature vector is concatenated with the positional encoding of the input viewing direction (γ(d)),
-            #  and is processed by an additional fully-connected ReLU layer with 128 channels."
-            self.views_linear = nn.Linear(input_ch_views + W, W//2)
-
-            # "A final layer (with a sigmoid activation) outputs the emitted RGB radiance at position x,
-            #  as viewed by a ray with direction d." NOTE: sigmoid is happening in raw2outputs()
-            self.rgb_linear = nn.Linear(W//2, 3)
-        else:
-            self.rgb_linear = nn.Linear(W, 3)
-
-    @nvtx.annotate("NeRF Forward")
     def forward(self, x):
-        input_position, input_viewdir = torch.split(x, [self.input_ch, self.input_ch_views], dim=-1)
+        encoded_position = self.position_encoder(x)
+        part1 = self.model_part1(encoded_position)
+        part2 = self.model_part2(torch.cat([encoded_position, part1], dim=-1))
+        return part2
 
-        h = self.backbone1(input_position)
-        h = self.backbone2(torch.cat([input_position, h], dim=-1))
+# An "Color" (view-angle dependent) MLP
+class CutlassColorMLP(nn.Module):
+    def __init__(self, degrees=4):
+        super(CutlassColorMLP, self).__init__()
+        self.W = 256
 
-        # "An additional layer outputs the volume density σ..."
-        density = self.density_linear(h)
+        # For consistency with original paper, we will use the position encoder on the viewing angle,
+        # even though a spherical harmonic encoder makes more sense.
+        encoding_config = json.loads(f'{{"otype":"Frequency", "n_frequencies":{degrees}}}')
+        self.view_encoder = tcnn.Encoding(n_input_dims=3, encoding_config=encoding_config, dtype=torch.float32)
 
-        if self.use_viewdirs:
-            #  ... and a 256-dimensional feature vector."
-            feature = self.feature_linear(h)
+        network_config = json.loads(f'''
+            {{"otype":"CutlassMLP", "activation":"ReLU", "output_activation":"None", "n_neurons":{self.W},
+              "n_hidden_layers":1}}''')
+        self.model = tcnn.Network(n_input_dims=self.view_encoder.n_output_dims + self.W, n_output_dims=3, network_config=network_config)
 
-            # This feature vector is concatenated with the positional encoding of the input viewing direction (γ(d)),
-            # and is processed by an additional fully-connected ReLU layer with 128 channels.
-            x = torch.cat([feature, input_viewdir.half()], -1)
-            x = F.relu(self.views_linear(x))
-
-            # "A final layer (with a sigmoid activation) outputs the emitted RGB radiance at position x,
-            #  as viewed by a ray with direction d."
-            rgb = self.rgb_linear(x)
-        else:
-            rgb = self.rgb_linear(h)
-
-        return h, rgb, density
+    def forward(self, x):
+        input_view, feature_vector = x.split([3, self.W], dim=-1)
+        encoded_view = self.view_encoder(input_view)
+        return self.model(torch.cat([encoded_view, feature_vector], dim=-1))
 
 
 # Dynamic NeRF model for dynamic portions of the scene
-# Generates additional scene flow field vectors and an disocclusion blending factor
-class CutlassDynamicNeRF(CutlassNeRF):
-    def __init__(self, D=8, W=256, input_ch=3, input_ch_views=3, output_ch=4, skips=[4], use_viewdirs=True):
-        super(CutlassDynamicNeRF, self).__init__(D, W, input_ch, input_ch_views, output_ch, skips, use_viewdirs)
+class CutlassDynamicNeRF(nn.Module):
+    def __init__(self):
+        super(CutlassDynamicNeRF, self).__init__()
+        self.W = 256
 
-        self.scene_flow_linear = nn.Linear(W, 6, dtype=torch.float16)
-        self.disocclusion_linear = nn.Linear(W, 2, dtype=torch.float16)
+        # 24 channels = scene flow (2 x 3-dim) + disocclusion weights (2 x 1-dim) + density and feature vector (256-dim)
+        self.density_mlp = CutlassDensityMLP(in_channels=4, out_channels=self.W + 8)
+        self.color_mlp = CutlassColorMLP()
 
-    @nvtx.annotate("Dynamic Cutlass NeRF forward")
+    @nvtx.annotate("Cutlass Dynamic NeRF forward")
     def forward(self, x):
-        h, rgb, density = super().forward(x)
+        # 4 input channels, 3 view channels
+        input_position, input_view = x.split([4, 3], dim=-1)
+        x = self.density_mlp(input_position)
 
-        scene_flow = F.tanh(self.scene_flow_linear(h))
-        disocclusion_blend = F.sigmoid(self.disocclusion_linear(h))
+        # 2 x 3-dim scene flow, 2 x 1-dim disocclusion blend, 256-dim feature vector
+        scene_flow, disocclusion_blend, feature_vector = torch.split(x, [6, 2, self.W], dim=-1)
 
-        return torch.cat([rgb, density, scene_flow, disocclusion_blend], dim=-1)
+        scene_flow = torch.tanh(scene_flow)
+        disocclusion_blend = torch.sigmoid(disocclusion_blend)
+        density = feature_vector[:, 0:1]
 
-class CutlassStaticNeRF(CutlassNeRF):
-    def __init__(self, D=8, W=256, input_ch=3, input_ch_views=3, output_ch=4, skips=[4], use_viewdirs=True):
-        super(CutlassStaticNeRF, self).__init__(D, W, input_ch, input_ch_views, output_ch, skips, use_viewdirs)
+        rgb = self.color_mlp(torch.cat([input_view, feature_vector], dim=-1))
 
-        self.blending_linear = nn.Linear(W, 1, dtype=torch.float16)
+        return torch.cat([rgb, density, scene_flow, disocclusion_blend], dim=-1).to(dtype=torch.float32)
+
+# Static NeRF model for static portions of the scene
+class CutlassStaticNeRF(nn.Module):
+    def __init__(self):
+        super(CutlassStaticNeRF, self).__init__()
+        self.W = 256
+
+        # 17 channels = static/dynamic blending weight (1-dim) + density and feature vector (256-dim)
+        self.density_mlp = CutlassDensityMLP(in_channels=3, out_channels=self.W+1)
+        self.color_mlp = CutlassColorMLP()
 
     @nvtx.annotate("Cutlass Static NeRF forward")
     def forward(self, x):
-        h, rgb, density = super().forward(x)
-        blending = F.sigmoid(self.blending_linear(h))
+        # 3 input channels, 3 view channels
+        input_position, input_view = x.split([3, 3], dim=-1)
+        x = self.density_mlp(input_position)
 
-        return torch.cat([rgb, density, blending], dim=-1)
+        # 1-dim blending weight, 256-dim feature vector
+        blending, feature_vector = x.split([1, self.W], dim=-1)
+
+        blending = torch.sigmoid(blending)
+        density = feature_vector[:, 0:1]
+
+        rgb = self.color_mlp(torch.cat([input_view, feature_vector], dim=-1))
+
+        return torch.cat([rgb, density, blending], dim=-1).to(dtype=torch.float32)

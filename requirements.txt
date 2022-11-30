@@ -13,3 +13,10 @@ torchvision==0.14.0
 
 # Optional performance profiling
 nvtx==0.2.5
+
+# ClearML integration
+clearml
+boto3
+
+# Tiny CUDA nn
+git+https://github.com/cmpt-985-term-project/tiny-cuda-nn/#subdirectory=bindings/torch

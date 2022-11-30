@@ -1,7 +1,7 @@
 expname = kid-running_ndc_5f_sv_of_sm_unify3
 
 basedir = ./logs
-datadir = /phoenix/S7/zl548/nerf_data/kid-running/dense
+datadir = /home/gmantel/Development/cmpt-985/datasets/nerf_data/kid_running/dense
 
 dataset_type = llff
 
@@ -10,10 +10,7 @@ llffhold = 10
 
 N_rand = 1024
 N_samples = 128
-N_importance = 0
-netwidth = 256
 
-use_viewdirs = True
 raw_noise_std = 1e0
 no_ndc = False
 lindisp = False
