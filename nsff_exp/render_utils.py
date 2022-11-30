@@ -599,11 +599,6 @@ def render(img_idx, chain_bwd, chain_5frames,
         k_sh = list(sh[:-1]) + list(all_ret[k].shape[1:])
         all_ret[k] = torch.reshape(all_ret[k], k_sh)
 
-    # k_extract = ['rgb_map', 'disp_map', 'depth_map', 'scene_flow', 'raw_sf_t']
-
-    # ret_list = [all_ret[k] for k in k_extract]
-    # ret_dict = {k : all_ret[k] for k in all_ret if k not in k_extract}
-    # return ret_list + [ret_dict]
     return all_ret
 
 
@@ -618,20 +613,11 @@ def render_bullet_time(render_poses, img_idx_embed, num_img,
         W = W//render_factor
         focal = focal/render_factor
 
-    rgbs = []
-    disps = []
-
-    t = time.time()
-
     save_img_dir = os.path.join(savedir, 'images')
-    # save_depth_dir = os.path.join(savedir, 'depths')
     os.makedirs(save_img_dir, exist_ok=True)
-    # os.makedirs(save_depth_dir, exist_ok=True)
 
     for i in range(0, (render_poses.shape[0])):
         c2w = render_poses[i]
-        print(i, time.time() - t)
-        t = time.time()
 
         ret = render(img_idx_embed, 0, False,
                      num_img, 
@@ -639,23 +625,17 @@ def render_bullet_time(render_poses, img_idx_embed, num_img,
                      chunk=1024*32, c2w=c2w[:3,:4], 
                      **render_kwargs)
 
-        depth = torch.clamp(ret['depth_map_ref']/percentile(ret['depth_map_ref'], 97), 0., 1.)  #1./disp
-        rgb = ret['rgb_map_ref'].cpu().numpy()#.append(ret['rgb_map_ref'].cpu().numpy())
+        rgb = ret['rgb_map_ref'].cpu().numpy()
 
         if savedir is not None:
             rgb8 = to8b(rgb)
-            depth8 = to8b(depth.unsqueeze(-1).repeat(1, 1, 3).cpu().numpy())
 
             start_y = (rgb8.shape[1] - 512) // 2
             rgb8 = rgb8[:, start_y:start_y+ 512, :]
 
-            # depth8 = depth8[:, start_y:start_y+ 512, :]
-
             filename = os.path.join(save_img_dir, '{:03d}.jpg'.format(i))
             imageio.imwrite(filename, rgb8)
 
-            # filename = os.path.join(save_depth_dir, '{:03d}.jpg'.format(i))
-            # imageio.imwrite(filename, depth8)
 
 def create_nerf(args):
     """Instantiate NeRF's MLP model.
@@ -810,7 +790,7 @@ def raw2outputs_warp(raw_p,
 
     depth_map = torch.sum(weights * z_vals, -1)
 
-    return rgb_map, depth_map, weights#, alpha #alpha#, 1. - probs
+    return rgb_map, depth_map, weights
 
 
 @nvtx.annotate("raw2outputs")

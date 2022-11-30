@@ -363,13 +363,13 @@ def train():
             if i % (decay_iteration * 1000) == 0:
                 torch.cuda.empty_cache()
 
-            # TODO: compare performance pre-copying images to GPU or not...
-            target = images[img_i].cuda()
+            target = images[img_i]
             pose = poses[img_i, :3,:4]
-            depth_gt = depths[img_i].cuda()
-            hard_coords = torch.Tensor(motion_coords[img_i]).cuda()
-            mask_gt = masks[img_i].cuda()
+            depth_gt = depths[img_i]
+            hard_coords = torch.Tensor(motion_coords[img_i])
+            mask_gt = masks[img_i]
 
+            # TODO: this seems like something which could be cached instead of read every iteration
             with nvtx.annotate("Read Optical Flow"):
                 if img_i == 0:
                     flow_fwd, fwd_mask = read_optical_flow(datadir, img_i,
@@ -387,11 +387,11 @@ def train():
                                                         img_i, args.start_frame, 
                                                         fwd=False)
 
-                flow_fwd = torch.Tensor(flow_fwd).cuda()
-                fwd_mask = torch.Tensor(fwd_mask).cuda()
+                flow_fwd = torch.Tensor(flow_fwd)
+                fwd_mask = torch.Tensor(fwd_mask)
             
-                flow_bwd = torch.Tensor(flow_bwd).cuda()
-                bwd_mask = torch.Tensor(bwd_mask).cuda()
+                flow_bwd = torch.Tensor(flow_bwd)
+                bwd_mask = torch.Tensor(bwd_mask)
 
                 # more correct way for flow loss
                 flow_fwd = flow_fwd + uv_grid
@@ -542,50 +542,45 @@ def train():
             if img_i == 0:
                 flow_loss = w_of * compute_mae(render_of_fwd, 
                                             target_of_fwd, 
-                                            target_fwd_mask)#torch.sum(torch.abs(render_of_fwd - target_of_fwd) * target_fwd_mask)/(torch.sum(target_fwd_mask) + 1e-8)
+                                            target_fwd_mask)
             elif img_i == num_img - 1:
                 flow_loss = w_of * compute_mae(render_of_bwd, 
                                             target_of_bwd, 
-                                            target_bwd_mask)#torch.sum(torch.abs(render_of_bwd - target_of_bwd) * target_bwd_mask)/(torch.sum(target_bwd_mask) + 1e-8)
+                                            target_bwd_mask)
             else:
                 flow_loss = w_of * compute_mae(render_of_fwd, 
                                             target_of_fwd, 
-                                            target_fwd_mask)#torch.sum(torch.abs(render_of_fwd - target_of_fwd) * target_fwd_mask)/(torch.sum(target_fwd_mask) + 1e-8)
+                                            target_fwd_mask)
                 flow_loss += w_of * compute_mae(render_of_bwd, 
                                             target_of_bwd, 
-                                            target_bwd_mask)#torch.sum(torch.abs(render_of_bwd - target_of_bwd) * target_bwd_mask)/(torch.sum(target_bwd_mask) + 1e-8)
+                                            target_bwd_mask)
 
-            # scene flow smoothness loss
-            sf_sm_loss = args.w_sm * (compute_sf_sm_loss(ret['raw_pts_ref'], 
-                                                        ret['raw_pts_post'], 
-                                                        H, W, focal) \
-                                    + compute_sf_sm_loss(ret['raw_pts_ref'], 
-                                                        ret['raw_pts_prev'], 
-                                                        H, W, focal))
+            # scene flow spatial smoothness loss
+            # Equation 1 in supplementary material
+            scene_flow_smoothness_loss = args.w_sm * \
+                compute_scene_flow_spatial_smoothness(ret['raw_pts_ref'], ret['raw_pts_post'], H, W, focal)
 
-            # scene flow least kinectic loss
-            sf_sm_loss += args.w_sm * compute_sf_lke_loss(ret['raw_pts_ref'], 
-                                                        ret['raw_pts_post'], 
-                                                        ret['raw_pts_prev'], 
-                                                        H, W, focal)
-            sf_sm_loss += args.w_sm * compute_sf_lke_loss(ret['raw_pts_ref'], 
-                                                        ret['raw_pts_post'], 
-                                                        ret['raw_pts_prev'], 
-                                                        H, W, focal)
+            scene_flow_smoothness_loss += args.w_sm * \
+                compute_scene_flow_spatial_smoothness(ret['raw_pts_ref'], ret['raw_pts_prev'], H, W, focal)
+
+            # scene flow temporal smoothness loss
+            # Equation 2 in supplementary material
+            scene_flow_smoothness_loss += args.w_sm * \
+                compute_scene_flow_temporal_smoothness(ret['raw_pts_ref'], ret['raw_pts_post'], ret['raw_pts_prev'], H, W, focal)
+
+            scene_flow_smoothness_loss += args.w_sm * \
+                compute_scene_flow_temporal_smoothness(ret['raw_pts_ref'], ret['raw_pts_post'], ret['raw_pts_prev'], H, W, focal)
+
             entropy_loss = args.w_entropy * torch.mean(-ret['raw_blend_w'] * torch.log(ret['raw_blend_w'] + 1e-8))
 
             # # ======================================  two-frames chain loss ===============================
             if chain_bwd:
-                sf_sm_loss += args.w_sm * compute_sf_lke_loss(ret['raw_pts_prev'], 
-                                                            ret['raw_pts_ref'], 
-                                                            ret['raw_pts_pp'], 
-                                                            H, W, focal)
+                scene_flow_smoothness_loss += args.w_sm * \
+                    compute_scene_flow_temporal_smoothness(ret['raw_pts_prev'], ret['raw_pts_ref'], ret['raw_pts_pp'], H, W, focal)
 
             else:
-                sf_sm_loss += args.w_sm * compute_sf_lke_loss(ret['raw_pts_post'], 
-                                                            ret['raw_pts_pp'], 
-                                                            ret['raw_pts_ref'], 
-                                                            H, W, focal)
+                scene_flow_smoothness_loss += args.w_sm * \
+                    compute_scene_flow_temporal_smoothness(ret['raw_pts_post'], ret['raw_pts_pp'], ret['raw_pts_ref'], H, W, focal)
 
             if chain_5frames:
                 render_loss += compute_mse(ret['rgb_map_pp_dy'], 
@@ -595,7 +590,7 @@ def train():
 
             loss = sf_reg_loss + sf_cycle_loss + \
                 render_loss + flow_loss + \
-                sf_sm_loss + prob_reg_loss + \
+                scene_flow_smoothness_loss + prob_reg_loss + \
                 depth_loss + entropy_loss 
 
             with nvtx.annotate("back propagation"):
@@ -641,7 +636,7 @@ def train():
 
                 writer.add_scalar("sf_reg_loss", sf_reg_loss.item(), i)
                 writer.add_scalar("sf_cycle_loss", sf_cycle_loss.item(), i)
-                writer.add_scalar("sf_sm_loss", sf_sm_loss.item(), i)
+                writer.add_scalar("scene_flow_smoothness_loss", scene_flow_smoothness_loss.item(), i)
 
             # Generate and save images (RGB, depth map, etc) to log
             if i%args.i_img == 0 and i > 0:
