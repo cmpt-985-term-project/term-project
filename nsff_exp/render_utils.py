@@ -136,14 +136,14 @@ def render_slowmo_bt(disps, render_poses, bt_poses,
 
         print('img_idx_embed_1 ', cur_time, img_idx_embed_1)
 
-        ret1 = render_sm(img_idx_embed_1, 0, False,
+        ret1 = render_slowmo(img_idx_embed_1,
                         num_img, 
                         H, W, focal, 
                         chunk=1024*16, 
                         c2w=render_pose,
                         **render_kwargs)
 
-        ret2 = render_sm(img_idx_embed_2, 0, False,
+        ret2 = render_slowmo(img_idx_embed_2,
                         num_img, 
                         H, W, focal, 
                         chunk=1024*16, 
@@ -234,14 +234,14 @@ def render_lockcam_slowmo(ref_c2w, num_img,
         print('render lock camera time ', i, cur_time, ratio, time.time() - t)
         t = time.time()
 
-        ret1 = render_sm(img_idx_embed_1, 0, False,
+        ret1 = render_slowmo(img_idx_embed_1,
                         num_img, 
                         H, W, focal, 
                         chunk=1024*16, 
                         c2w=render_pose,
                         **render_kwargs)
 
-        ret2 = render_sm(img_idx_embed_2, 0, False,
+        ret2 = render_slowmo(img_idx_embed_2,
                         num_img, 
                         H, W, focal, 
                         chunk=1024*16, 
@@ -282,7 +282,8 @@ def render_lockcam_slowmo(ref_c2w, num_img,
         imageio.imwrite(filename, rgb8)
 
 
-def render_sm(img_idx, chain_bwd, chain_5frames,
+# Render a frame for slow-motion video (time interpolation)
+def render_slowmo(img_idx,
                num_img, H, W, focal,     
                chunk=1024*16, rays=None, c2w=None, ndc=True,
                near=0., far=1.,
@@ -339,23 +340,21 @@ def render_sm(img_idx, chain_bwd, chain_5frames,
     rays = torch.cat([rays, viewdirs], -1)
 
     # Render and reshape
-    all_ret = batchify_rays_sm(img_idx, chain_bwd, chain_5frames, 
-                               num_img, rays, chunk, **kwargs)
+    all_ret = batchify_rays_slowmo(img_idx, num_img, rays, chunk, **kwargs)
     for k in all_ret:
         k_sh = list(sh[:-1]) + list(all_ret[k].shape[1:])
         all_ret[k] = torch.reshape(all_ret[k], k_sh)
 
     return all_ret
 
-def batchify_rays_sm(img_idx, chain_bwd, chain_5frames, 
-                    num_img, rays_flat, chunk=1024*16, **kwargs):
+# Batify rays for slow-motion video (time interpolation)
+def batchify_rays_slowmo(img_idx, num_img, rays_flat, chunk=1024*16, **kwargs):
     """Render rays in smaller minibatches to avoid OOM.
     """
 
     all_ret = {}
     for i in range(0, rays_flat.shape[0], chunk):
-        ret = render_rays_sm(img_idx, chain_bwd, chain_5frames, 
-                            num_img, rays_flat[i:i+chunk], **kwargs)
+        ret = render_rays_slowmo(img_idx, num_img, rays_flat[i:i+chunk], **kwargs)
         for k in ret:
             if k not in all_ret:
                 all_ret[k] = []
@@ -397,24 +396,19 @@ def raw2rgba_blend_slowmo(raw, raw_blend_w, z_vals, rays_d, raw_noise_std=0):
     return rgb, alpha
 
 
-
-def render_rays_sm(img_idx, 
-                chain_bwd,
-                chain_5frames,
+# Render rays for slow motion video (time interpolation)
+def render_rays_slowmo(img_idx,
                 num_img,
                 ray_batch,
                 network_fn,
                 network_query_fn, 
                 rigid_network_query_fn,
                 N_samples,
-                retraw=False,
                 lindisp=False,
                 perturb=0.,
                 network_rigid=None,
                 white_bkgd=False,
                 raw_noise_std=0.,
-                verbose=False,
-                pytest=False,
                 inference=True):
     """Volumetric rendering.
     Args:
@@ -425,13 +419,11 @@ def render_rays_sm(img_idx,
         in space.
       network_query_fn: function used for passing queries to network_fn.
       N_samples: int. Number of different times to sample along each ray.
-      retraw: bool. If True, include model's raw, unprocessed predictions.
       lindisp: bool. If True, sample linearly in inverse depth rather than in depth.
       perturb: float, 0 or 1. If non-zero, each ray is sampled at stratified
         random points in time.
       white_bkgd: bool. If True, assume a white background.
       raw_noise_std: ...
-      verbose: bool. If True, print more debugging info.
     Returns:
       rgb_map: [num_rays, 3]. Estimated RGB color of a ray. Comes from fine model.
       disp_map: [num_rays]. Disparity map. 1 / depth.
@@ -607,11 +599,6 @@ def render(img_idx, chain_bwd, chain_5frames,
         k_sh = list(sh[:-1]) + list(all_ret[k].shape[1:])
         all_ret[k] = torch.reshape(all_ret[k], k_sh)
 
-    # k_extract = ['rgb_map', 'disp_map', 'depth_map', 'scene_flow', 'raw_sf_t']
-
-    # ret_list = [all_ret[k] for k in k_extract]
-    # ret_dict = {k : all_ret[k] for k in all_ret if k not in k_extract}
-    # return ret_list + [ret_dict]
     return all_ret
 
 
@@ -626,20 +613,11 @@ def render_bullet_time(render_poses, img_idx_embed, num_img,
         W = W//render_factor
         focal = focal/render_factor
 
-    rgbs = []
-    disps = []
-
-    t = time.time()
-
     save_img_dir = os.path.join(savedir, 'images')
-    # save_depth_dir = os.path.join(savedir, 'depths')
     os.makedirs(save_img_dir, exist_ok=True)
-    # os.makedirs(save_depth_dir, exist_ok=True)
 
     for i in range(0, (render_poses.shape[0])):
         c2w = render_poses[i]
-        print(i, time.time() - t)
-        t = time.time()
 
         ret = render(img_idx_embed, 0, False,
                      num_img, 
@@ -647,23 +625,17 @@ def render_bullet_time(render_poses, img_idx_embed, num_img,
                      chunk=1024*32, c2w=c2w[:3,:4], 
                      **render_kwargs)
 
-        depth = torch.clamp(ret['depth_map_ref']/percentile(ret['depth_map_ref'], 97), 0., 1.)  #1./disp
-        rgb = ret['rgb_map_ref'].cpu().numpy()#.append(ret['rgb_map_ref'].cpu().numpy())
+        rgb = ret['rgb_map_ref'].cpu().numpy()
 
         if savedir is not None:
             rgb8 = to8b(rgb)
-            depth8 = to8b(depth.unsqueeze(-1).repeat(1, 1, 3).cpu().numpy())
 
             start_y = (rgb8.shape[1] - 512) // 2
             rgb8 = rgb8[:, start_y:start_y+ 512, :]
 
-            # depth8 = depth8[:, start_y:start_y+ 512, :]
-
             filename = os.path.join(save_img_dir, '{:03d}.jpg'.format(i))
             imageio.imwrite(filename, rgb8)
 
-            # filename = os.path.join(save_depth_dir, '{:03d}.jpg'.format(i))
-            # imageio.imwrite(filename, depth8)
 
 def create_nerf(args):
     """Instantiate NeRF's MLP model.
@@ -825,7 +797,7 @@ def raw2outputs_warp(raw_p,
 
     depth_map = torch.sum(weights * z_vals, -1)
 
-    return rgb_map, depth_map, weights#, alpha #alpha#, 1. - probs
+    return rgb_map, depth_map, weights
 
 
 @nvtx.annotate("raw2outputs")
