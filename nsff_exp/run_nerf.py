@@ -595,7 +595,7 @@ def train():
 
             loss = sf_reg_loss + sf_cycle_loss + \
                    render_loss + flow_loss + \
-                   sf_sm_loss + prob_reg_loss + \
+                   scene_flow_smoothness_loss + prob_reg_loss + \
                    depth_loss + entropy_loss
 
             with nvtx.annotate("back propagation"):
