@@ -173,7 +173,7 @@ def config_parser():
     parser.add_argument("--enable_pinned_memory", action='store_true',
                         help='Use pinned memory with data loaders')
     parser.add_argument("--optimizer", type=str, default='Adam',
-                        help='Optimizer to use. Either SGD or Adam (default)')
+                        help='Optimizer to use. Either SGD, Adagrad, or Adam (default)')
 
     return parser
 

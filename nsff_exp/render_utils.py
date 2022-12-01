@@ -692,6 +692,8 @@ def create_nerf(args):
         optimizer = torch.optim.Adam(params=grad_vars, lr=args.lrate, betas=(0.9, 0.999))
     elif args.optimizer == 'SGD':
         optimizer = torch.optim.SGD(params=grad_vars, lr=args.lrate)
+    elif args.optimizer == 'Adagrad':
+        optimizer = torch.optim.Adagrad(params=grad_vars, lr=args.lrate)
     else:
         raise ValueError(f'Unknown optimizer class: {args.optimizer}')
 
