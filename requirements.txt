@@ -16,7 +16,8 @@ nvtx==0.2.5
 
 # ClearML integration
 clearml
-boto3
+boto3==1.26.20
+botocore==1.29.20
 
 # Tiny CUDA nn
 git+https://github.com/cmpt-985-term-project/tiny-cuda-nn/@FP32_default#subdirectory=bindings/torch
