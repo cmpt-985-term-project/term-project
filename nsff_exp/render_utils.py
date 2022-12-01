@@ -688,7 +688,12 @@ def create_nerf(args):
     rigid_network_query_fn = lambda inputs, viewdirs, network_fn : run_network(inputs, viewdirs, network_fn, netchunk=args.netchunk)
 
     # Create optimizer
-    optimizer = torch.optim.Adam(params=grad_vars, lr=args.lrate, betas=(0.9, 0.999))
+    if args.optimizer == 'Adam':
+        optimizer = torch.optim.Adam(params=grad_vars, lr=args.lrate, betas=(0.9, 0.999))
+    elif args.optimizer == 'SGD':
+        optimizer = torch.optim.SGD(params=grad_vars, lr=args.lrate)
+    else:
+        raise ValueError(f'Unknown optimizer class: {args.optimizer}')
 
     start = 0
     basedir = args.basedir

@@ -1,5 +1,4 @@
 import torch
-torch.autograd.set_detect_anomaly(False)
 import torch.nn as nn
 
 import nvtx
@@ -57,6 +56,8 @@ class DensityMLP(nn.Module):
             nn.Linear(self.W, out_channels)
         )
 
+    # TODO - set a flag to enable this
+    #@torch.autocast(device_type="cuda")
     def forward(self, x):
         encoded_position = self.position_encoder(x)
         part1 = self.model_part1(encoded_position)
@@ -78,6 +79,8 @@ class ColorMLP(nn.Module):
             nn.Linear(self.W, 3)
         )
 
+    # TODO - set a flag to enable this
+    #@torch.autocast(device_type="cuda")
     def forward(self, x):
         input_view, feature_vector = x.split([3, self.W], dim=-1)
         encoded_view = self.view_encoder(input_view)

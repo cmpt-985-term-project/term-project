@@ -172,6 +172,8 @@ def config_parser():
                         help='Enable fused kernel for Adam optimization - default False')
     parser.add_argument("--enable_pinned_memory", action='store_true',
                         help='Use pinned memory with data loaders')
+    parser.add_argument("--optimizer", type=str, default='Adam',
+                        help='Optimizer to use. Either SGD or Adam (default)')
 
     return parser
 
@@ -597,9 +599,9 @@ def train():
 
 
             loss = sf_reg_loss + sf_cycle_loss + \
-                render_loss + flow_loss + \
-                sf_sm_loss + prob_reg_loss + \
-                depth_loss + entropy_loss 
+                   render_loss + flow_loss + \
+                   sf_sm_loss + prob_reg_loss + \
+                   depth_loss + entropy_loss
 
             with nvtx.annotate("back propagation"):
                 loss.backward()
