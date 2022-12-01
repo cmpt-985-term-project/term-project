@@ -6,7 +6,6 @@
 # 128 neurons per layer.
 
 import torch
-torch.autograd.set_detect_anomaly(False)
 import torch.nn as nn
 
 import tinycudann as tcnn
