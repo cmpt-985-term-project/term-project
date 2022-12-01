@@ -100,8 +100,6 @@ class FusedDynamicNeRF(nn.Module):
 
         rgb = self.color_mlp(torch.cat([input_view, feature_vector], dim=-1))
 
-        import pdb; pdb.set_trace()
-
         return torch.cat([rgb, density, scene_flow, disocclusion_blend], dim=-1)
 
 # Static NeRF model for static portions of the scene
