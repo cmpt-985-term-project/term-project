@@ -669,8 +669,8 @@ def create_nerf(args):
     """Instantiate NeRF's MLP model.
     """
     if args.nerf_model == 'PyTorch':
-        model = DynamicNeRF().to(device)
-        model_rigid = StaticNeRF().to(device)
+        model = DynamicNeRF(args.use_fp16).to(device)
+        model_rigid = StaticNeRF(args.use_fp16).to(device)
     elif args.nerf_model == 'CutlassMLP':
         model = CutlassDynamicNeRF().to(device)
         model_rigid = CutlassStaticNeRF().to(device)

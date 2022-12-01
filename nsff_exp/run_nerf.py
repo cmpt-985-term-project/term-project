@@ -187,12 +187,6 @@ def train():
     if args.allow_tf32:
         torch.backends.cuda.matmul.allow_tf32 = True
 
-    # Set the default tensor type
-    if args.use_fp16:
-        torch.set_default_tensor_type('torch.cuda.HalfTensor')
-    else:
-        torch.set_default_tensor_type('torch.cuda.FloatTensor')
-
     # Load data
     if args.use_clearml:
         datadir = Dataset.get(dataset_name=args.dataset_name, dataset_project=args.dataset_project).get_local_copy()
@@ -732,4 +726,8 @@ def train():
             global_step += 1
 
 if __name__=='__main__':
+    # Set the default tensor type - keep it at 32-bit float as much as possible.
+    # Only use 16-bit for the model weights and training data
+    torch.set_default_tensor_type('torch.cuda.FloatTensor')
+
     train()
