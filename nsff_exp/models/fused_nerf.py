@@ -47,7 +47,6 @@ class FusedDensityMLP(nn.Module):
               "n_hidden_layers":3, "feedback_alignment":false}}''')
         self.model_part2 = tcnn.Network(n_input_dims=self.W + self.position_encoder.n_output_dims, n_output_dims=out_channels, network_config=network_config2)
 
-    @torch.autocast(device_type="cuda")
     def forward(self, x):
         encoded_position = self.position_encoder(x)
         part1 = self.model_part1(encoded_position)
@@ -70,7 +69,6 @@ class FusedColorMLP(nn.Module):
               "n_hidden_layers":1, "feedback_alignment":false}}''')
         self.model = tcnn.Network(n_input_dims=self.view_encoder.n_output_dims + self.W, n_output_dims=3, network_config=network_config)
 
-    @torch.autocast(device_type="cuda")
     def forward(self, x):
         input_view, feature_vector = x.split([3, self.W], dim=-1)
         encoded_view = self.view_encoder(input_view)
