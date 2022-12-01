@@ -166,10 +166,14 @@ def config_parser():
                         help='NeRF architecture. Either Pytorch, FusedMLP, or CutlassMLP')
     parser.add_argument("--allow_tf32", action='store_true',
                         help='Enable TF32 tensor cores for matrix multiplication')
+    parser.add_argument("--use_fp16", action='store_true',
+                        help='Default of tf.float16 for half-precision floating point training')
     parser.add_argument("--enable_fused_adam", action='store_true',
                         help='Enable fused kernel for Adam optimization - default False')
     parser.add_argument("--enable_pinned_memory", action='store_true',
                         help='Use pinned memory with data loaders')
+    parser.add_argument("--optimizer", type=str, default='Adam',
+                        help='Optimizer to use. Either SGD, Adagrad, or Adam (default)')
 
     return parser
 
@@ -201,6 +205,7 @@ def train():
                                                             recenter=True, bd_factor=.9,
                                                             spherify=args.spherify, 
                                                             final_height=args.final_height)
+
 
         hwf = poses[0,:3,-1]
         poses = poses[:,:3,:4]
@@ -594,9 +599,9 @@ def train():
 
 
             loss = sf_reg_loss + sf_cycle_loss + \
-                render_loss + flow_loss + \
-                sf_sm_loss + prob_reg_loss + \
-                depth_loss + entropy_loss 
+                   render_loss + flow_loss + \
+                   sf_sm_loss + prob_reg_loss + \
+                   depth_loss + entropy_loss
 
             with nvtx.annotate("back propagation"):
                 loss.backward()
@@ -723,5 +728,8 @@ def train():
             global_step += 1
 
 if __name__=='__main__':
+    # Set the default tensor type - keep it at 32-bit float as much as possible.
+    # Only use 16-bit for the model weights and training data
     torch.set_default_tensor_type('torch.cuda.FloatTensor')
+
     train()

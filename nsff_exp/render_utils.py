@@ -322,7 +322,7 @@ def render_sm(img_idx, chain_bwd, chain_5frames,
         # special case to visualize effect of viewdirs
         rays_o, rays_d = get_rays(H, W, focal, c2w_staticcam)
     viewdirs = viewdirs / torch.norm(viewdirs, dim=-1, keepdim=True)
-    viewdirs = torch.reshape(viewdirs, [-1,3]).float()
+    viewdirs = torch.reshape(viewdirs, [-1,3])
 
     sh = rays_d.shape # [..., 3]
 
@@ -331,8 +331,8 @@ def render_sm(img_idx, chain_bwd, chain_5frames,
         rays_o, rays_d = ndc_rays(H, W, focal, 1., rays_o, rays_d)
 
     # Create ray batch
-    rays_o = torch.reshape(rays_o, [-1,3]).float()
-    rays_d = torch.reshape(rays_d, [-1,3]).float()
+    rays_o = torch.reshape(rays_o, [-1,3])
+    rays_d = torch.reshape(rays_d, [-1,3])
 
     near, far = near * torch.ones_like(rays_d[...,:1]), far * torch.ones_like(rays_d[...,:1])
     rays = torch.cat([rays_o, rays_d, near, far], -1)
@@ -584,7 +584,7 @@ def render(img_idx, chain_bwd, chain_5frames,
         # special case to visualize effect of viewdirs
         rays_o, rays_d = get_rays(H, W, focal, c2w_staticcam)
     viewdirs = viewdirs / torch.norm(viewdirs, dim=-1, keepdim=True)
-    viewdirs = torch.reshape(viewdirs, [-1,3]).float()
+    viewdirs = torch.reshape(viewdirs, [-1,3])
 
     sh = rays_d.shape # [..., 3]
 
@@ -593,8 +593,8 @@ def render(img_idx, chain_bwd, chain_5frames,
         rays_o, rays_d = ndc_rays(H, W, focal, 1., rays_o, rays_d)
 
     # Create ray batch
-    rays_o = torch.reshape(rays_o, [-1,3]).float()
-    rays_d = torch.reshape(rays_d, [-1,3]).float()
+    rays_o = torch.reshape(rays_o, [-1,3])
+    rays_d = torch.reshape(rays_d, [-1,3])
 
     near, far = near * torch.ones_like(rays_d[...,:1]), far * torch.ones_like(rays_d[...,:1])
     rays = torch.cat([rays_o, rays_d, near, far], -1)
@@ -669,8 +669,8 @@ def create_nerf(args):
     """Instantiate NeRF's MLP model.
     """
     if args.nerf_model == 'PyTorch':
-        model = DynamicNeRF().to(device)
-        model_rigid = StaticNeRF().to(device)
+        model = DynamicNeRF(args.use_fp16).to(device)
+        model_rigid = StaticNeRF(args.use_fp16).to(device)
     elif args.nerf_model == 'CutlassMLP':
         model = CutlassDynamicNeRF().to(device)
         model_rigid = CutlassStaticNeRF().to(device)
@@ -688,7 +688,14 @@ def create_nerf(args):
     rigid_network_query_fn = lambda inputs, viewdirs, network_fn : run_network(inputs, viewdirs, network_fn, netchunk=args.netchunk)
 
     # Create optimizer
-    optimizer = torch.optim.Adam(params=grad_vars, lr=args.lrate, betas=(0.9, 0.999))
+    if args.optimizer == 'Adam':
+        optimizer = torch.optim.Adam(params=grad_vars, lr=args.lrate, betas=(0.9, 0.999))
+    elif args.optimizer == 'SGD':
+        optimizer = torch.optim.SGD(params=grad_vars, lr=args.lrate)
+    elif args.optimizer == 'Adagrad':
+        optimizer = torch.optim.Adagrad(params=grad_vars, lr=args.lrate)
+    else:
+        raise ValueError(f'Unknown optimizer class: {args.optimizer}')
 
     start = 0
     basedir = args.basedir
