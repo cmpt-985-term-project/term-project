@@ -19,4 +19,4 @@ clearml
 boto3
 
 # Tiny CUDA nn
-git+https://github.com/cmpt-985-term-project/tiny-cuda-nn/#subdirectory=bindings/torch
+git+https://github.com/cmpt-985-term-project/tiny-cuda-nn/@FP32_default#subdirectory=bindings/torch
