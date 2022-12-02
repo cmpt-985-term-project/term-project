@@ -174,6 +174,10 @@ def config_parser():
                         help='Use pinned memory with data loaders')
     parser.add_argument("--optimizer", type=str, default='Adam',
                         help='Optimizer to use. Either SGD, Adagrad, or Adam (default)')
+    parser.add_argument("--use_gradient_clipping", action='store_true',
+                        help='Use gradient clipping. Default False.')
+    parser.add_argument("--gradient_max_norm", type=float, default=10.0,
+                        help='If using gradient clipping, the max norm of the gradients')
 
     return parser
 
@@ -600,6 +604,9 @@ def train():
 
             with nvtx.annotate("back propagation"):
                 loss.backward()
+
+            if args.use_gradient_clipping:
+                torch.nn.utils.clip_grad_norm_(grad_vars, args.gradient_max_norm)
 
             with nvtx.annotate("optimizer step"):
                 optimizer.step()
