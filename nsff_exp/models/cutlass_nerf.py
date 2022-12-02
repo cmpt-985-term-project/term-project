@@ -53,13 +53,13 @@ class CutlassDensityMLP(nn.Module):
         self.position_encoder = PositionalEncoder(in_channels=in_channels, degrees=degrees)
 
         network_config1 = json.loads(f'''
-            {{"otype":"CutlassMLP", "activation":"ReLU", "output_activation":"None", "n_neurons":{self.W},
-              "n_hidden_layers":2}}''')
+            {{"otype":"CutlassMLP", "activation":"ReLU", "output_activation":"ReLU", "n_neurons":{self.W},
+              "n_hidden_layers":3}}''')
         self.model_part1 = tcnn.Network(n_input_dims=self.position_encoder.n_output_dims, n_output_dims=self.W, network_config=network_config1)
 
         network_config2 = json.loads(f'''
             {{"otype":"CutlassMLP", "activation":"ReLU", "output_activation":"None", "n_neurons":{self.W},
-              "n_hidden_layers":3}}''')
+              "n_hidden_layers":4}}''')
         self.model_part2 = tcnn.Network(n_input_dims=self.W + self.position_encoder.n_output_dims, n_output_dims=out_channels, network_config=network_config2)
 
     def forward(self, x):
