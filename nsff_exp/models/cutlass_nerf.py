@@ -59,7 +59,7 @@ class CutlassDensityMLP(nn.Module):
 
         network_config2 = json.loads(f'''
             {{"otype":"CutlassMLP", "activation":"ReLU", "output_activation":"None", "n_neurons":{self.W},
-              "n_hidden_layers":4}}''')
+              "n_hidden_layers":3}}''')
         self.model_part2 = tcnn.Network(n_input_dims=self.W + self.position_encoder.n_output_dims, n_output_dims=out_channels, network_config=network_config2)
 
     def forward(self, x):
