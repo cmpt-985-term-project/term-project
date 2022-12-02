@@ -67,8 +67,8 @@ class CutlassDynamicNeRF(nn.Module):
         super(CutlassDynamicNeRF, self).__init__()
         self.W = 256
 
-        # 24 channels = scene flow (2 x 3-dim) + disocclusion weights (2 x 1-dim) + density and feature vector (256-dim)
-        self.density_mlp = CutlassDensityMLP(in_channels=4, out_channels=self.W + 8)
+        # scene flow (2 x 3-dim) + disocclusion weights (2 x 1-dim) + density and feature vector (256-dim)
+        self.density_mlp = CutlassDensityMLP(in_channels=4, out_channels=self.W + 6 + 2 + 1)
         self.color_mlp = CutlassColorMLP()
 
     @nvtx.annotate("Cutlass Dynamic NeRF forward")
@@ -77,16 +77,15 @@ class CutlassDynamicNeRF(nn.Module):
         input_position, input_view = x.split([4, 3], dim=-1)
         x = self.density_mlp(input_position)
 
-        # 2 x 3-dim scene flow, 2 x 1-dim disocclusion blend, 256-dim feature vector
-        scene_flow, disocclusion_blend, feature_vector = torch.split(x, [6, 2, self.W], dim=-1)
+        # 2 x 3-dim scene flow, 2 x 1-dim disocclusion blend, 1 density value, and a 256-dim feature vector
+        scene_flow, disocclusion_blend, density, feature_vector = torch.split(x, [6, 2, 1, self.W], dim=-1)
 
         scene_flow = torch.tanh(scene_flow)
         disocclusion_blend = torch.sigmoid(disocclusion_blend)
-        density = feature_vector[:, 0:1]
 
         rgb = self.color_mlp(torch.cat([input_view, feature_vector], dim=-1))
 
-        return torch.cat([rgb, density, scene_flow, disocclusion_blend], dim=-1).to(dtype=torch.float32)
+        return torch.cat([rgb, density, scene_flow, disocclusion_blend], dim=-1)
 
 # Static NeRF model for static portions of the scene
 class CutlassStaticNeRF(nn.Module):
@@ -94,8 +93,8 @@ class CutlassStaticNeRF(nn.Module):
         super(CutlassStaticNeRF, self).__init__()
         self.W = 256
 
-        # 17 channels = static/dynamic blending weight (1-dim) + density and feature vector (256-dim)
-        self.density_mlp = CutlassDensityMLP(in_channels=3, out_channels=self.W+1)
+        # static/dynamic blending weight (1-dim) + density and feature vector (256-dim)
+        self.density_mlp = CutlassDensityMLP(in_channels=3, out_channels=self.W + 1 + 1)
         self.color_mlp = CutlassColorMLP()
 
     @nvtx.annotate("Cutlass Static NeRF forward")
@@ -104,12 +103,11 @@ class CutlassStaticNeRF(nn.Module):
         input_position, input_view = x.split([3, 3], dim=-1)
         x = self.density_mlp(input_position)
 
-        # 1-dim blending weight, 256-dim feature vector
-        blending, feature_vector = x.split([1, self.W], dim=-1)
+        # 1-dim blending weight, density value, and 256-dim feature vector
+        blending, density, feature_vector = x.split([1, 1, self.W], dim=-1)
 
         blending = torch.sigmoid(blending)
-        density = feature_vector[:, 0:1]
 
         rgb = self.color_mlp(torch.cat([input_view, feature_vector], dim=-1))
 
-        return torch.cat([rgb, density, blending], dim=-1).to(dtype=torch.float32)
+        return torch.cat([rgb, density, blending], dim=-1)
