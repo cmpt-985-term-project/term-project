@@ -356,8 +356,12 @@ def train():
 
     chain_bwd = 0
 
+    # Throttle update intervals for ClearML reporting
+    mininterval = 60 if args.use_clearml else 0.1
+    maxinterval = 60 if args.use_clearml else 10.0
+
     start = start + 1
-    for i in trange(start, N_iters, mininterval=60, maxinterval=60):
+    for i in trange(start, N_iters, mininterval=mininterval, maxinterval=maxinterval):
         with nvtx.annotate(f'Training iteration {i}'):
             chain_bwd = 1 - chain_bwd
             time0 = time.time()
