@@ -12,6 +12,33 @@ import tinycudann as tcnn
 import json
 import nvtx
 
+# Positional encoding (section 5.1)
+class PositionalEncoder(nn.Module):
+    def __init__(self, in_channels, degrees, include_inputs=True):
+        super(PositionalEncoder, self).__init__()
+        embed_fns = []
+        out_channels = 0
+
+        # Optionally include the inputs in the encoding.
+        # The supplementary material in the NSFF paper says that this is set to False for the
+        # static NeRF, but the code seems to keep it as True.
+        if include_inputs:
+            embed_fns.append(lambda x: x)
+            out_channels += in_channels
+
+        # Encoding is powers of 2 times sin and cos of input
+        freq_bands = 2.**torch.linspace(0., degrees-1, steps=degrees)
+        for freq in freq_bands:
+            for p_fn in [torch.sin, torch.cos]:
+                embed_fns.append(lambda x, p_fn=p_fn, freq=freq: p_fn(x * freq))
+                out_channels += in_channels
+
+        self.embed_fns = embed_fns
+        self.n_output_dims = out_channels
+
+    def forward(self, inputs):
+        return torch.cat([fn(inputs) for fn in self.embed_fns], -1)
+
 # A "Density" (not view-angle dependent) MLP
 class CutlassDensityMLP(nn.Module):
     def __init__(self, in_channels, out_channels, degrees=10):
@@ -20,8 +47,10 @@ class CutlassDensityMLP(nn.Module):
         # Network parameters
         self.W = 256
 
-        encoding_config = json.loads(f'{{"otype":"Frequency", "n_frequencies":{degrees}}}')
-        self.position_encoder = tcnn.Encoding(n_input_dims=in_channels, encoding_config=encoding_config, dtype=torch.float32)
+        self.position_encoder = PositionalEncoder(in_channels=in_channels, degrees=degrees)
+
+        #encoding_config = json.loads(f'{{"otype":"Frequency", "n_frequencies":{degrees}}}')
+        #self.position_encoder = tcnn.Encoding(n_input_dims=in_channels, encoding_config=encoding_config, dtype=torch.float32)
 
         network_config1 = json.loads(f'''
             {{"otype":"CutlassMLP", "activation":"ReLU", "output_activation":"None", "n_neurons":{self.W},
@@ -39,7 +68,7 @@ class CutlassDensityMLP(nn.Module):
         part2 = self.model_part2(torch.cat([encoded_position, part1], dim=-1))
         return part2
 
-# An "Color" (view-angle dependent) MLP
+# A "Color" (view-angle dependent) MLP
 class CutlassColorMLP(nn.Module):
     def __init__(self, degrees=4):
         super(CutlassColorMLP, self).__init__()
@@ -47,8 +76,10 @@ class CutlassColorMLP(nn.Module):
 
         # For consistency with original paper, we will use the position encoder on the viewing angle,
         # even though a spherical harmonic encoder makes more sense.
-        encoding_config = json.loads(f'{{"otype":"Frequency", "n_frequencies":{degrees}}}')
-        self.view_encoder = tcnn.Encoding(n_input_dims=3, encoding_config=encoding_config, dtype=torch.float32)
+        #encoding_config = json.loads(f'{{"otype":"Frequency", "n_frequencies":{degrees}}}')
+        #self.view_encoder = tcnn.Encoding(n_input_dims=3, encoding_config=encoding_config, dtype=torch.float32)
+
+        self.view_encoder = PositionalEncoder(in_channels=3, degrees=degrees)
 
         network_config = json.loads(f'''
             {{"otype":"CutlassMLP", "activation":"ReLU", "output_activation":"None", "n_neurons":{self.W},
