@@ -12,6 +12,34 @@ import tinycudann as tcnn
 import json
 import nvtx
 
+# Positional encoding (section 5.1)
+class PositionalEncoder(nn.Module):
+    def __init__(self, in_channels, degrees, include_inputs=True):
+        super(PositionalEncoder, self).__init__()
+        embed_fns = []
+        out_channels = 0
+
+        # Optionally include the inputs in the encoding.
+        # The supplementary material in the NSFF paper says that this is set to False for the
+        # static NeRF, but the code seems to keep it as True.
+        if include_inputs:
+            embed_fns.append(lambda x: x)
+            out_channels += in_channels
+
+        # Encoding is powers of 2 times sin and cos of input
+        freq_bands = 2.**torch.linspace(0., degrees-1, steps=degrees)
+        for freq in freq_bands:
+            for p_fn in [torch.sin, torch.cos]:
+                embed_fns.append(lambda x, p_fn=p_fn, freq=freq: p_fn(x * freq))
+                out_channels += in_channels
+
+        self.embed_fns = embed_fns
+        self.n_output_dims = out_channels
+
+    def forward(self, inputs):
+        return torch.cat([fn(inputs) for fn in self.embed_fns], -1)
+
+
 # A "Density" (not view-angle dependent) MLP
 class CutlassDensityMLP(nn.Module):
     def __init__(self, in_channels, out_channels, degrees=10):
@@ -20,12 +48,13 @@ class CutlassDensityMLP(nn.Module):
         # Network parameters
         self.W = 256
 
-        encoding_config = json.loads(f'{{"otype":"Frequency", "n_frequencies":{degrees}}}')
-        self.position_encoder = tcnn.Encoding(n_input_dims=in_channels, encoding_config=encoding_config, dtype=torch.float32)
+        #encoding_config = json.loads(f'{{"otype":"Frequency", "n_frequencies":{degrees}}}')
+        #self.position_encoder = tcnn.Encoding(n_input_dims=in_channels, encoding_config=encoding_config, dtype=torch.float32)
+        self.position_encoder = PositionalEncoder(in_channels=in_channels, degrees=degrees)
 
         network_config1 = json.loads(f'''
-            {{"otype":"CutlassMLP", "activation":"ReLU", "output_activation":"None", "n_neurons":{self.W},
-              "n_hidden_layers":2}}''')
+            {{"otype":"CutlassMLP", "activation":"ReLU", "output_activation":"ReLU", "n_neurons":{self.W},
+              "n_hidden_layers":3}}''')
         self.model_part1 = tcnn.Network(n_input_dims=self.position_encoder.n_output_dims, n_output_dims=self.W, network_config=network_config1)
 
         network_config2 = json.loads(f'''
@@ -47,8 +76,9 @@ class CutlassColorMLP(nn.Module):
 
         # For consistency with original paper, we will use the position encoder on the viewing angle,
         # even though a spherical harmonic encoder makes more sense.
-        encoding_config = json.loads(f'{{"otype":"Frequency", "n_frequencies":{degrees}}}')
-        self.view_encoder = tcnn.Encoding(n_input_dims=3, encoding_config=encoding_config, dtype=torch.float32)
+        #encoding_config = json.loads(f'{{"otype":"Frequency", "n_frequencies":{degrees}}}')
+        #self.view_encoder = tcnn.Encoding(n_input_dims=3, encoding_config=encoding_config, dtype=torch.float32)
+        self.view_encoder = PositionalEncoder(in_channels=3, degrees=degrees)
 
         network_config = json.loads(f'''
             {{"otype":"CutlassMLP", "activation":"ReLU", "output_activation":"None", "n_neurons":{self.W},
@@ -67,8 +97,8 @@ class CutlassDynamicNeRF(nn.Module):
         super(CutlassDynamicNeRF, self).__init__()
         self.W = 256
 
-        # 24 channels = scene flow (2 x 3-dim) + disocclusion weights (2 x 1-dim) + density and feature vector (256-dim)
-        self.density_mlp = CutlassDensityMLP(in_channels=4, out_channels=self.W + 8)
+        # scene flow (2 x 3-dim) + disocclusion weights (2 x 1-dim) + density and feature vector (256-dim)
+        self.density_mlp = CutlassDensityMLP(in_channels=4, out_channels=self.W + 6 + 2 + 1)
         self.color_mlp = CutlassColorMLP()
 
     @nvtx.annotate("Cutlass Dynamic NeRF forward")
@@ -77,16 +107,15 @@ class CutlassDynamicNeRF(nn.Module):
         input_position, input_view = x.split([4, 3], dim=-1)
         x = self.density_mlp(input_position)
 
-        # 2 x 3-dim scene flow, 2 x 1-dim disocclusion blend, 256-dim feature vector
-        scene_flow, disocclusion_blend, feature_vector = torch.split(x, [6, 2, self.W], dim=-1)
+        # 2 x 3-dim scene flow, 2 x 1-dim disocclusion blend, 1 density value, and a 256-dim feature vector
+        scene_flow, disocclusion_blend, density, feature_vector = torch.split(x, [6, 2, 1, self.W], dim=-1)
 
         scene_flow = torch.tanh(scene_flow)
         disocclusion_blend = torch.sigmoid(disocclusion_blend)
-        density = feature_vector[:, 0:1]
 
         rgb = self.color_mlp(torch.cat([input_view, feature_vector], dim=-1))
 
-        return torch.cat([rgb, density, scene_flow, disocclusion_blend], dim=-1).to(dtype=torch.float32)
+        return torch.cat([rgb, density, scene_flow, disocclusion_blend], dim=-1)
 
 # Static NeRF model for static portions of the scene
 class CutlassStaticNeRF(nn.Module):
@@ -94,8 +123,8 @@ class CutlassStaticNeRF(nn.Module):
         super(CutlassStaticNeRF, self).__init__()
         self.W = 256
 
-        # 17 channels = static/dynamic blending weight (1-dim) + density and feature vector (256-dim)
-        self.density_mlp = CutlassDensityMLP(in_channels=3, out_channels=self.W+1)
+        # static/dynamic blending weight (1-dim) + density and feature vector (256-dim)
+        self.density_mlp = CutlassDensityMLP(in_channels=3, out_channels=self.W + 1 + 1)
         self.color_mlp = CutlassColorMLP()
 
     @nvtx.annotate("Cutlass Static NeRF forward")
@@ -104,12 +133,11 @@ class CutlassStaticNeRF(nn.Module):
         input_position, input_view = x.split([3, 3], dim=-1)
         x = self.density_mlp(input_position)
 
-        # 1-dim blending weight, 256-dim feature vector
-        blending, feature_vector = x.split([1, self.W], dim=-1)
+        # 1-dim blending weight, density value, and 256-dim feature vector
+        blending, density, feature_vector = x.split([1, 1, self.W], dim=-1)
 
         blending = torch.sigmoid(blending)
-        density = feature_vector[:, 0:1]
 
         rgb = self.color_mlp(torch.cat([input_view, feature_vector], dim=-1))
 
-        return torch.cat([rgb, density, blending], dim=-1).to(dtype=torch.float32)
+        return torch.cat([rgb, density, blending], dim=-1)

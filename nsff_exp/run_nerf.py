@@ -17,6 +17,7 @@ from load_llff import *
 
 # For performance profiling
 import nvtx
+import contextlib
 
 # Experiment tracking
 from clearml import Dataset
@@ -168,6 +169,8 @@ def config_parser():
                         help='Enable TF32 tensor cores for matrix multiplication')
     parser.add_argument("--use_fp16", action='store_true',
                         help='Default of tf.float16 for half-precision floating point training')
+    parser.add_argument("--use_amp", action='store_true',
+                        help='Use automated mixed-precision')
     parser.add_argument("--enable_fused_adam", action='store_true',
                         help='Enable fused kernel for Adam optimization - default False')
     parser.add_argument("--enable_pinned_memory", action='store_true',
@@ -360,253 +363,265 @@ def train():
     mininterval = 60 if args.use_clearml else 0.1
     maxinterval = 60 if args.use_clearml else 10.0
 
+    # Note: bfloat16 has the same range as float32, at the cost of precision.
+    if args.use_amp:
+        autocast_context = torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+        loss_scaler = torch.cuda.amp.GradScaler()
+    else:
+        autocast_context = contextlib.nullcontext()
+
     start = start + 1
     for i in trange(start, N_iters, mininterval=mininterval, maxinterval=maxinterval):
         with nvtx.annotate(f'Training iteration {i}'):
-            chain_bwd = 1 - chain_bwd
-            time0 = time.time()
 
-            # Random from one image
-            img_i = np.random.choice(i_train)
+            # Note: bfloat16 has the same range as float32, at the cost of precision.
+            with autocast_context:
+                chain_bwd = 1 - chain_bwd
+                time0 = time.time()
 
-            if i % (decay_iteration * 1000) == 0:
-                torch.cuda.empty_cache()
+                # Random from one image
+                img_i = np.random.choice(i_train)
 
-            target = images[img_i]
-            pose = poses[img_i, :3,:4]
-            depth_gt = depths[img_i]
-            hard_coords = torch.Tensor(motion_coords[img_i])
-            mask_gt = masks[img_i]
+                if i % (decay_iteration * 1000) == 0:
+                    torch.cuda.empty_cache()
 
-            # TODO: this seems like something which could be cached instead of read every iteration
-            with nvtx.annotate("Read Optical Flow"):
-                if img_i == 0:
-                    flow_fwd, fwd_mask = read_optical_flow(datadir, img_i,
-                                                        args.start_frame, fwd=True)
-                    flow_bwd, bwd_mask = np.zeros_like(flow_fwd), np.zeros_like(fwd_mask)
-                elif img_i == num_img - 1:
-                    flow_bwd, bwd_mask = read_optical_flow(datadir, img_i,
-                                                        args.start_frame, fwd=False)
-                    flow_fwd, fwd_mask = np.zeros_like(flow_bwd), np.zeros_like(bwd_mask)
-                else:
-                    flow_fwd, fwd_mask = read_optical_flow(datadir,
-                                                        img_i, args.start_frame, 
-                                                        fwd=True)
-                    flow_bwd, bwd_mask = read_optical_flow(datadir,
-                                                        img_i, args.start_frame, 
-                                                        fwd=False)
+                target = images[img_i]
+                pose = poses[img_i, :3,:4]
+                depth_gt = depths[img_i]
+                hard_coords = torch.Tensor(motion_coords[img_i])
+                mask_gt = masks[img_i]
 
-                flow_fwd = torch.Tensor(flow_fwd)
-                fwd_mask = torch.Tensor(fwd_mask)
-            
-                flow_bwd = torch.Tensor(flow_bwd)
-                bwd_mask = torch.Tensor(bwd_mask)
+                # TODO: this seems like something which could be cached instead of read every iteration
+                with nvtx.annotate("Read Optical Flow"):
+                    if img_i == 0:
+                        flow_fwd, fwd_mask = read_optical_flow(datadir, img_i,
+                                                            args.start_frame, fwd=True)
+                        flow_bwd, bwd_mask = np.zeros_like(flow_fwd), np.zeros_like(fwd_mask)
+                    elif img_i == num_img - 1:
+                        flow_bwd, bwd_mask = read_optical_flow(datadir, img_i,
+                                                            args.start_frame, fwd=False)
+                        flow_fwd, fwd_mask = np.zeros_like(flow_bwd), np.zeros_like(bwd_mask)
+                    else:
+                        flow_fwd, fwd_mask = read_optical_flow(datadir,
+                                                            img_i, args.start_frame, 
+                                                            fwd=True)
+                        flow_bwd, bwd_mask = read_optical_flow(datadir,
+                                                            img_i, args.start_frame, 
+                                                            fwd=False)
 
-                # more correct way for flow loss
-                flow_fwd = flow_fwd + uv_grid
-                flow_bwd = flow_bwd + uv_grid
+                    flow_fwd = torch.Tensor(flow_fwd)
+                    fwd_mask = torch.Tensor(fwd_mask)
+                
+                    flow_bwd = torch.Tensor(flow_bwd)
+                    bwd_mask = torch.Tensor(bwd_mask)
 
-            if N_rand is not None:
-                with nvtx.annotate("Get Rays"):
-                    rays_o, rays_d = get_rays(H, W, focal, torch.Tensor(pose))  # (H, W, 3), (H, W, 3)
-                    coords = torch.stack(torch.meshgrid(torch.linspace(0, H-1, H), torch.linspace(0, W-1, W)), -1)  # (H, W, 2)
-                    coords = torch.reshape(coords, [-1,2])  # (H * W, 2)
+                    # more correct way for flow loss
+                    flow_fwd = flow_fwd + uv_grid
+                    flow_bwd = flow_bwd + uv_grid
 
-                    if args.use_motion_mask and i < decay_iteration * 1000:
-                        num_extra_sample = args.num_extra_sample
-                        select_inds_hard = np.random.choice(hard_coords.shape[0], 
-                                                            size=[min(hard_coords.shape[0], 
-                                                                num_extra_sample)], 
+                if N_rand is not None:
+                    with nvtx.annotate("Get Rays"):
+                        rays_o, rays_d = get_rays(H, W, focal, torch.Tensor(pose))  # (H, W, 3), (H, W, 3)
+                        coords = torch.stack(torch.meshgrid(torch.linspace(0, H-1, H), torch.linspace(0, W-1, W)), -1)  # (H, W, 2)
+                        coords = torch.reshape(coords, [-1,2])  # (H * W, 2)
+
+                        if args.use_motion_mask and i < decay_iteration * 1000:
+                            num_extra_sample = args.num_extra_sample
+                            select_inds_hard = np.random.choice(hard_coords.shape[0], 
+                                                                size=[min(hard_coords.shape[0], 
+                                                                    num_extra_sample)], 
+                                                                replace=False)  # (N_rand,)
+                            select_inds_all = np.random.choice(coords.shape[0], 
+                                                            size=[N_rand], 
                                                             replace=False)  # (N_rand,)
-                        select_inds_all = np.random.choice(coords.shape[0], 
+
+                            select_coords_hard = hard_coords[select_inds_hard].long()
+                            select_coords_all = coords[select_inds_all].long()
+
+                            select_coords = torch.cat([select_coords_all, select_coords_hard], 0)
+
+                        else:
+                            select_inds = np.random.choice(coords.shape[0], 
                                                         size=[N_rand], 
                                                         replace=False)  # (N_rand,)
-
-                        select_coords_hard = hard_coords[select_inds_hard].long()
-                        select_coords_all = coords[select_inds_all].long()
-
-                        select_coords = torch.cat([select_coords_all, select_coords_hard], 0)
-
-                    else:
-                        select_inds = np.random.choice(coords.shape[0], 
-                                                    size=[N_rand], 
-                                                    replace=False)  # (N_rand,)
-                        select_coords = coords[select_inds].long()  # (N_rand, 2)
-                    
-                    rays_o = rays_o[select_coords[:, 0], 
-                                    select_coords[:, 1]]  # (N_rand, 3)
-                    rays_d = rays_d[select_coords[:, 0], 
-                                    select_coords[:, 1]]  # (N_rand, 3)
-                    batch_rays = torch.stack([rays_o, rays_d], 0)
-                    target_rgb = target[select_coords[:, 0], 
+                            select_coords = coords[select_inds].long()  # (N_rand, 2)
+                        
+                        rays_o = rays_o[select_coords[:, 0], 
                                         select_coords[:, 1]]  # (N_rand, 3)
-                    target_depth = depth_gt[select_coords[:, 0], 
-                                        select_coords[:, 1]]
-                    target_mask = mask_gt[select_coords[:, 0], 
-                                        select_coords[:, 1]].unsqueeze(-1)
-
-                    target_of_fwd = flow_fwd[select_coords[:, 0], 
+                        rays_d = rays_d[select_coords[:, 0], 
+                                        select_coords[:, 1]]  # (N_rand, 3)
+                        batch_rays = torch.stack([rays_o, rays_d], 0)
+                        target_rgb = target[select_coords[:, 0], 
+                                            select_coords[:, 1]]  # (N_rand, 3)
+                        target_depth = depth_gt[select_coords[:, 0], 
                                             select_coords[:, 1]]
-                    target_fwd_mask = fwd_mask[select_coords[:, 0], 
-                                            select_coords[:, 1]].unsqueeze(-1)#.repeat(1, 2)
+                        target_mask = mask_gt[select_coords[:, 0], 
+                                            select_coords[:, 1]].unsqueeze(-1)
 
-                    target_of_bwd = flow_bwd[select_coords[:, 0], 
-                                            select_coords[:, 1]]
-                    target_bwd_mask = bwd_mask[select_coords[:, 0], 
-                                            select_coords[:, 1]].unsqueeze(-1)#.repeat(1, 2)
+                        target_of_fwd = flow_fwd[select_coords[:, 0], 
+                                                select_coords[:, 1]]
+                        target_fwd_mask = fwd_mask[select_coords[:, 0], 
+                                                select_coords[:, 1]].unsqueeze(-1)#.repeat(1, 2)
 
-            img_idx_embed = img_i/num_img * 2. - 1.0
+                        target_of_bwd = flow_bwd[select_coords[:, 0], 
+                                                select_coords[:, 1]]
+                        target_bwd_mask = bwd_mask[select_coords[:, 0], 
+                                                select_coords[:, 1]].unsqueeze(-1)#.repeat(1, 2)
 
-            #####  Core optimization loop  #####
-            if args.chain_sf and i > decay_iteration * 1000 * 2:
-                chain_5frames = True
-            else:
-                chain_5frames = False
+                img_idx_embed = img_i/num_img * 2. - 1.0
 
-            ret = render(img_idx_embed, 
-                        chain_bwd, 
-                        chain_5frames,
-                        num_img, H, W, focal, 
-                        chunk=args.chunk, 
-                        rays=batch_rays,
-                        verbose=i < 10, retraw=True,
-                        **render_kwargs_train)
+                #####  Core optimization loop  #####
+                if args.chain_sf and i > decay_iteration * 1000 * 2:
+                    chain_5frames = True
+                else:
+                    chain_5frames = False
 
-            pose_post = poses[min(img_i + 1, int(num_img) - 1), :3,:4]
-            pose_prev = poses[max(img_i - 1, 0), :3,:4]
+                ret = render(img_idx_embed, 
+                            chain_bwd, 
+                            chain_5frames,
+                            num_img, H, W, focal, 
+                            chunk=args.chunk, 
+                            rays=batch_rays,
+                            verbose=i < 10, retraw=True,
+                            **render_kwargs_train)
 
-            render_of_fwd, render_of_bwd = compute_optical_flow(pose_post, 
-                                                                pose, pose_prev, 
-                                                                H, W, focal, 
-                                                                ret)
+                pose_post = poses[min(img_i + 1, int(num_img) - 1), :3,:4]
+                pose_prev = poses[max(img_i - 1, 0), :3,:4]
+
+                render_of_fwd, render_of_bwd = compute_optical_flow(pose_post, 
+                                                                    pose, pose_prev, 
+                                                                    H, W, focal, 
+                                                                    ret)
+
+                weight_map_post = ret['prob_map_post']
+                weight_map_prev = ret['prob_map_prev']
+
+                weight_post = 1. - ret['raw_prob_ref2post']
+                weight_prev = 1. - ret['raw_prob_ref2prev']
+                prob_reg_loss = args.w_prob_reg * (torch.mean(torch.abs(ret['raw_prob_ref2prev'])) \
+                                        + torch.mean(torch.abs(ret['raw_prob_ref2post'])))
+
+                # dynamic rendering loss
+                if i <= decay_iteration * 1000:
+                    # dynamic rendering loss
+                    render_loss = img2mse(ret['rgb_map_ref_dy'], target_rgb)
+                    render_loss += compute_mse(ret['rgb_map_post_dy'], 
+                                            target_rgb, 
+                                            weight_map_post.unsqueeze(-1))
+                    render_loss += compute_mse(ret['rgb_map_prev_dy'], 
+                                            target_rgb, 
+                                            weight_map_prev.unsqueeze(-1))
+                else:
+                    weights_map_dd = ret['weights_map_dd'].unsqueeze(-1).detach()
+
+                    # dynamic rendering loss
+                    render_loss = compute_mse(ret['rgb_map_ref_dy'], 
+                                            target_rgb, 
+                                            weights_map_dd)
+                    render_loss += compute_mse(ret['rgb_map_post_dy'], 
+                                            target_rgb, 
+                                            weight_map_post.unsqueeze(-1) * weights_map_dd)
+                    render_loss += compute_mse(ret['rgb_map_prev_dy'], 
+                                            target_rgb, 
+                                            weight_map_prev.unsqueeze(-1) * weights_map_dd)
+
+                # union rendering loss
+                render_loss += img2mse(ret['rgb_map_ref'][:N_rand, ...], 
+                                    target_rgb[:N_rand, ...])
+
+                sf_cycle_loss = args.w_cycle * compute_mae(ret['raw_sf_ref2post'], 
+                                                        -ret['raw_sf_post2ref'], 
+                                                        weight_post.unsqueeze(-1), dim=3) 
+                sf_cycle_loss += args.w_cycle * compute_mae(ret['raw_sf_ref2prev'], 
+                                                            -ret['raw_sf_prev2ref'], 
+                                                            weight_prev.unsqueeze(-1), dim=3)
+                
+                # regularization loss
+                render_sf_ref2prev = torch.sum(ret['weights_ref_dy'].unsqueeze(-1) * ret['raw_sf_ref2prev'], -1)
+                render_sf_ref2post = torch.sum(ret['weights_ref_dy'].unsqueeze(-1) * ret['raw_sf_ref2post'], -1)
+
+                sf_reg_loss = args.w_sf_reg * (torch.mean(torch.abs(render_sf_ref2prev)) \
+                                            + torch.mean(torch.abs(render_sf_ref2post))) 
+
+                divsor = i // (decay_iteration * 1000)
+
+                decay_rate = 10
+
+                if args.decay_depth_w:
+                    w_depth = args.w_depth/(decay_rate ** divsor)
+                else:
+                    w_depth = args.w_depth
+
+                if args.decay_optical_flow_w:
+                    w_of = args.w_optical_flow/(decay_rate ** divsor)
+                else:
+                    w_of = args.w_optical_flow
+
+                depth_loss = w_depth * compute_depth_loss(ret['depth_map_ref_dy'], -target_depth)
+
+                if img_i == 0:
+                    flow_loss = w_of * compute_mae(render_of_fwd, 
+                                                target_of_fwd, 
+                                                target_fwd_mask)
+                elif img_i == num_img - 1:
+                    flow_loss = w_of * compute_mae(render_of_bwd, 
+                                                target_of_bwd, 
+                                                target_bwd_mask)
+                else:
+                    flow_loss = w_of * compute_mae(render_of_fwd, 
+                                                target_of_fwd, 
+                                                target_fwd_mask)
+                    flow_loss += w_of * compute_mae(render_of_bwd, 
+                                                target_of_bwd, 
+                                                target_bwd_mask)
+
+                # scene flow spatial smoothness loss
+                # Equation 1 in supplementary material
+                scene_flow_smoothness_loss = args.w_sm * \
+                    compute_scene_flow_spatial_smoothness(ret['raw_pts_ref'], ret['raw_pts_post'], H, W, focal)
+
+                scene_flow_smoothness_loss += args.w_sm * \
+                    compute_scene_flow_spatial_smoothness(ret['raw_pts_ref'], ret['raw_pts_prev'], H, W, focal)
+
+                # scene flow temporal smoothness loss
+                # Equation 2 in supplementary material
+                scene_flow_smoothness_loss += args.w_sm * \
+                    compute_scene_flow_temporal_smoothness(ret['raw_pts_ref'], ret['raw_pts_post'], ret['raw_pts_prev'], H, W, focal)
+
+                scene_flow_smoothness_loss += args.w_sm * \
+                    compute_scene_flow_temporal_smoothness(ret['raw_pts_ref'], ret['raw_pts_post'], ret['raw_pts_prev'], H, W, focal)
+
+                entropy_loss = args.w_entropy * torch.mean(-ret['raw_blend_w'] * torch.log(ret['raw_blend_w'] + 1e-8))
+
+                # # ======================================  two-frames chain loss ===============================
+                if chain_bwd:
+                    scene_flow_smoothness_loss += args.w_sm * \
+                        compute_scene_flow_temporal_smoothness(ret['raw_pts_prev'], ret['raw_pts_ref'], ret['raw_pts_pp'], H, W, focal)
+
+                else:
+                    scene_flow_smoothness_loss += args.w_sm * \
+                        compute_scene_flow_temporal_smoothness(ret['raw_pts_post'], ret['raw_pts_pp'], ret['raw_pts_ref'], H, W, focal)
+
+                if chain_5frames:
+                    render_loss += compute_mse(ret['rgb_map_pp_dy'], 
+                                            target_rgb, 
+                                            weights_map_dd)
+
+
+                loss = sf_reg_loss + sf_cycle_loss + \
+                    render_loss + flow_loss + \
+                    scene_flow_smoothness_loss + prob_reg_loss + \
+                    depth_loss + entropy_loss
 
             optimizer.zero_grad()
-
-            weight_map_post = ret['prob_map_post']
-            weight_map_prev = ret['prob_map_prev']
-
-            weight_post = 1. - ret['raw_prob_ref2post']
-            weight_prev = 1. - ret['raw_prob_ref2prev']
-            prob_reg_loss = args.w_prob_reg * (torch.mean(torch.abs(ret['raw_prob_ref2prev'])) \
-                                    + torch.mean(torch.abs(ret['raw_prob_ref2post'])))
-
-            # dynamic rendering loss
-            if i <= decay_iteration * 1000:
-                # dynamic rendering loss
-                render_loss = img2mse(ret['rgb_map_ref_dy'], target_rgb)
-                render_loss += compute_mse(ret['rgb_map_post_dy'], 
-                                        target_rgb, 
-                                        weight_map_post.unsqueeze(-1))
-                render_loss += compute_mse(ret['rgb_map_prev_dy'], 
-                                        target_rgb, 
-                                        weight_map_prev.unsqueeze(-1))
+            if args.use_amp:
+                loss_scaler.scale(loss).backward()
+                loss_scaler.step(optimizer)
+                loss_scaler.update()
             else:
-                weights_map_dd = ret['weights_map_dd'].unsqueeze(-1).detach()
-
-                # dynamic rendering loss
-                render_loss = compute_mse(ret['rgb_map_ref_dy'], 
-                                        target_rgb, 
-                                        weights_map_dd)
-                render_loss += compute_mse(ret['rgb_map_post_dy'], 
-                                        target_rgb, 
-                                        weight_map_post.unsqueeze(-1) * weights_map_dd)
-                render_loss += compute_mse(ret['rgb_map_prev_dy'], 
-                                        target_rgb, 
-                                        weight_map_prev.unsqueeze(-1) * weights_map_dd)
-
-            # union rendering loss
-            render_loss += img2mse(ret['rgb_map_ref'][:N_rand, ...], 
-                                target_rgb[:N_rand, ...])
-
-            sf_cycle_loss = args.w_cycle * compute_mae(ret['raw_sf_ref2post'], 
-                                                    -ret['raw_sf_post2ref'], 
-                                                    weight_post.unsqueeze(-1), dim=3) 
-            sf_cycle_loss += args.w_cycle * compute_mae(ret['raw_sf_ref2prev'], 
-                                                        -ret['raw_sf_prev2ref'], 
-                                                        weight_prev.unsqueeze(-1), dim=3)
-            
-            # regularization loss
-            render_sf_ref2prev = torch.sum(ret['weights_ref_dy'].unsqueeze(-1) * ret['raw_sf_ref2prev'], -1)
-            render_sf_ref2post = torch.sum(ret['weights_ref_dy'].unsqueeze(-1) * ret['raw_sf_ref2post'], -1)
-
-            sf_reg_loss = args.w_sf_reg * (torch.mean(torch.abs(render_sf_ref2prev)) \
-                                        + torch.mean(torch.abs(render_sf_ref2post))) 
-
-            divsor = i // (decay_iteration * 1000)
-
-            decay_rate = 10
-
-            if args.decay_depth_w:
-                w_depth = args.w_depth/(decay_rate ** divsor)
-            else:
-                w_depth = args.w_depth
-
-            if args.decay_optical_flow_w:
-                w_of = args.w_optical_flow/(decay_rate ** divsor)
-            else:
-                w_of = args.w_optical_flow
-
-            depth_loss = w_depth * compute_depth_loss(ret['depth_map_ref_dy'], -target_depth)
-
-            if img_i == 0:
-                flow_loss = w_of * compute_mae(render_of_fwd, 
-                                            target_of_fwd, 
-                                            target_fwd_mask)
-            elif img_i == num_img - 1:
-                flow_loss = w_of * compute_mae(render_of_bwd, 
-                                            target_of_bwd, 
-                                            target_bwd_mask)
-            else:
-                flow_loss = w_of * compute_mae(render_of_fwd, 
-                                            target_of_fwd, 
-                                            target_fwd_mask)
-                flow_loss += w_of * compute_mae(render_of_bwd, 
-                                            target_of_bwd, 
-                                            target_bwd_mask)
-
-            # scene flow spatial smoothness loss
-            # Equation 1 in supplementary material
-            scene_flow_smoothness_loss = args.w_sm * \
-                compute_scene_flow_spatial_smoothness(ret['raw_pts_ref'], ret['raw_pts_post'], H, W, focal)
-
-            scene_flow_smoothness_loss += args.w_sm * \
-                compute_scene_flow_spatial_smoothness(ret['raw_pts_ref'], ret['raw_pts_prev'], H, W, focal)
-
-            # scene flow temporal smoothness loss
-            # Equation 2 in supplementary material
-            scene_flow_smoothness_loss += args.w_sm * \
-                compute_scene_flow_temporal_smoothness(ret['raw_pts_ref'], ret['raw_pts_post'], ret['raw_pts_prev'], H, W, focal)
-
-            scene_flow_smoothness_loss += args.w_sm * \
-                compute_scene_flow_temporal_smoothness(ret['raw_pts_ref'], ret['raw_pts_post'], ret['raw_pts_prev'], H, W, focal)
-
-            entropy_loss = args.w_entropy * torch.mean(-ret['raw_blend_w'] * torch.log(ret['raw_blend_w'] + 1e-8))
-
-            # # ======================================  two-frames chain loss ===============================
-            if chain_bwd:
-                scene_flow_smoothness_loss += args.w_sm * \
-                    compute_scene_flow_temporal_smoothness(ret['raw_pts_prev'], ret['raw_pts_ref'], ret['raw_pts_pp'], H, W, focal)
-
-            else:
-                scene_flow_smoothness_loss += args.w_sm * \
-                    compute_scene_flow_temporal_smoothness(ret['raw_pts_post'], ret['raw_pts_pp'], ret['raw_pts_ref'], H, W, focal)
-
-            if chain_5frames:
-                render_loss += compute_mse(ret['rgb_map_pp_dy'], 
-                                        target_rgb, 
-                                        weights_map_dd)
-
-
-            loss = sf_reg_loss + sf_cycle_loss + \
-                   render_loss + flow_loss + \
-                   scene_flow_smoothness_loss + prob_reg_loss + \
-                   depth_loss + entropy_loss
-
-            with nvtx.annotate("back propagation"):
                 loss.backward()
-
-            with nvtx.annotate("optimizer step"):
                 optimizer.step()
+
 
             # NOTE: IMPORTANT!
             ###   update learning rate   ###
@@ -617,9 +632,22 @@ def train():
                 param_group['lr'] = new_lrate
             ################################
 
-            dt = time.time()-time0
-
             # Rest is logging
+
+            # Write scalars to log
+            if i % args.i_print == 0 and i > 0:
+                torch.cuda.synchronize()
+
+                writer.add_scalar("loss", loss.item(), i)
+                
+                writer.add_scalar("render_loss", render_loss.item(), i)
+                writer.add_scalar("depth_loss", depth_loss.item(), i)
+                writer.add_scalar("flow_loss", flow_loss.item(), i)
+                writer.add_scalar("prob_reg_loss", prob_reg_loss.item(), i)
+
+                writer.add_scalar("sf_reg_loss", sf_reg_loss.item(), i)
+                writer.add_scalar("sf_cycle_loss", sf_cycle_loss.item(), i)
+                writer.add_scalar("scene_flow_smoothness_loss", scene_flow_smoothness_loss.item(), i)
 
             # Save network weights
             if i%args.i_weights==0 and i > 0:
@@ -633,19 +661,6 @@ def train():
                 }, path)
 
                 print('Saved checkpoints at', path)
-
-            # Write scalars to log
-            if i % args.i_print == 0 and i > 0:
-                writer.add_scalar("loss", loss.item(), i)
-                
-                writer.add_scalar("render_loss", render_loss.item(), i)
-                writer.add_scalar("depth_loss", depth_loss.item(), i)
-                writer.add_scalar("flow_loss", flow_loss.item(), i)
-                writer.add_scalar("prob_reg_loss", prob_reg_loss.item(), i)
-
-                writer.add_scalar("sf_reg_loss", sf_reg_loss.item(), i)
-                writer.add_scalar("sf_cycle_loss", sf_cycle_loss.item(), i)
-                writer.add_scalar("scene_flow_smoothness_loss", scene_flow_smoothness_loss.item(), i)
 
             # Generate and save images (RGB, depth map, etc) to log
             if i%args.i_img == 0 and i > 0:
