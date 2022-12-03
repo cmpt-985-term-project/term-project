@@ -34,7 +34,10 @@ class FusedDensityMLP(nn.Module):
         # Network parameters
         self.W = 128
 
-        encoding_config = json.loads(f'{{"otype":"Frequency", "n_frequencies":{degrees}}}')
+        #encoding_config = json.loads(f'{{"otype":"Frequency", "n_frequencies":{degrees}}}')
+        encoding_config = json.loads(f'''
+            {{"otype":"Grid", "type":"Hash", "n_levels":16, "n_features_per_level":2, "log2_hashmap_size": 19,
+              "base_resolution": 16, "per_level_scale": 2.0, "interpolation": "Linear"}}''')
         self.position_encoder = tcnn.Encoding(n_input_dims=in_channels, encoding_config=encoding_config)
 
         network_config1 = json.loads(f'''
@@ -59,9 +62,8 @@ class FusedColorMLP(nn.Module):
         super(FusedColorMLP, self).__init__()
         self.W = 128
 
-        # For consistency with original paper, we will use the position encoder on the viewing angle,
-        # even though a spherical harmonic encoder makes more sense.
-        encoding_config = json.loads(f'{{"otype":"Frequency", "n_frequencies":{degrees}}}')
+        #encoding_config = json.loads(f'{{"otype":"Frequency", "n_frequencies":{degrees}}}')
+        encoding_config = json.loads(f'{{"otype":"SphericalHarmonics", "degree":4}}')
         self.view_encoder = tcnn.Encoding(n_input_dims=3, encoding_config=encoding_config)
 
         network_config = json.loads(f'''
