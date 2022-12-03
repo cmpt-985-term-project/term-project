@@ -81,28 +81,23 @@ class FusedDynamicNeRF(nn.Module):
         super(FusedDynamicNeRF, self).__init__()
         self.W = 128
 
-        # 24 channels = scene flow (2 x 3-dim) + disocclusion weights (2 x 1-dim) + density and feature vector (128-dim)
-        self.density_mlp = FusedDensityMLP(in_channels=4, out_channels=self.W + 8)
+        # 24 channels = scene flow (2 x 3-dim) + disocclusion weights (2 x 1-dim) + 1-dim density + 128-dim feature vector
+        self.density_mlp = FusedDensityMLP(in_channels=4, out_channels=self.W + 6 + 2 + 1 )
         self.color_mlp = FusedColorMLP()
 
     @nvtx.annotate("Fused Dynamic NeRF forward")
     def forward(self, x):
-        # Fused NeRF is 16-bit internally
-        x = x.to(torch.float16)
-
         # 4 input channels, 3 view channels
         input_position, input_view = x.split([4, 3], dim=-1)
         x = self.density_mlp(input_position)
 
-        # 2 x 3-dim scene flow, 2 x 1-dim disocclusion blend, 128-dim feature vector
-        scene_flow, disocclusion_blend, feature_vector = torch.split(x, [6, 2, self.W], dim=-1)
+        # 2 x 3-dim scene flow, 2 x 1-dim disocclusion blend, 1 density value, and 128-dim feature vector
+        scene_flow, disocclusion_blend, density, feature_vector = torch.split(x, [6, 2, 1, self.W], dim=-1)
 
-        scene_flow = torch.tanh(scene_flow.to(torch.float32))
-        disocclusion_blend = torch.sigmoid(disocclusion_blend.to(torch.float32))
-        density = feature_vector[:, 0:1].to(torch.float32)
+        scene_flow = torch.tanh(scene_flow)
+        disocclusion_blend = torch.sigmoid(disocclusion_blend)
 
         rgb = self.color_mlp(torch.cat([input_view, feature_vector], dim=-1))
-        rgb = rgb.to(torch.float32)
 
         return torch.cat([rgb, density, scene_flow, disocclusion_blend], dim=-1)
 
@@ -112,8 +107,8 @@ class FusedStaticNeRF(nn.Module):
         super(FusedStaticNeRF, self).__init__()
         self.W = 128
 
-        # 17 channels = static/dynamic blending weight (1-dim) + density and feature vector (128-dim)
-        self.density_mlp = FusedDensityMLP(in_channels=3, out_channels=self.W+1)
+        # 17 channels = static/dynamic blending weight (1-dim) + 1-dim density and 128-dim feature vector
+        self.density_mlp = FusedDensityMLP(in_channels=3, out_channels=self.W + 1 + 1)
         self.color_mlp = FusedColorMLP()
 
     @nvtx.annotate("Fused Static NeRF forward")
@@ -126,12 +121,10 @@ class FusedStaticNeRF(nn.Module):
         x = self.density_mlp(input_position)
 
         # 1-dim blending weight, 128-dim feature vector
-        blending, feature_vector = x.split([1, self.W], dim=-1)
+        blending, density, feature_vector = x.split([1, 1, self.W], dim=-1)
 
-        blending = torch.sigmoid(blending.to(torch.float32))
-        density = feature_vector[:, 0:1].to(torch.float32)
+        blending = torch.sigmoid(blending)
 
         rgb = self.color_mlp(torch.cat([input_view, feature_vector], dim=-1))
-        rgb = rgb.to(torch.float32)
 
         return torch.cat([rgb, density, blending], dim=-1)
