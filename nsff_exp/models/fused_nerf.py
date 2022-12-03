@@ -113,9 +113,6 @@ class FusedStaticNeRF(nn.Module):
 
     @nvtx.annotate("Fused Static NeRF forward")
     def forward(self, x):
-        # Fused NeRF is 16-bit internally
-        x = x.to(torch.float16)
-
         # 3 input channels, 3 view channels
         input_position, input_view = x.split([3, 3], dim=-1)
         x = self.density_mlp(input_position)
