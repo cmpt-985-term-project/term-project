@@ -480,8 +480,6 @@ def train():
                                                                 H, W, focal, 
                                                                 ret)
 
-            optimizer.zero_grad()
-
             weight_map_post = ret['prob_map_post']
             weight_map_prev = ret['prob_map_prev']
 
@@ -602,6 +600,7 @@ def train():
                    scene_flow_smoothness_loss + prob_reg_loss + \
                    depth_loss + entropy_loss
 
+            optimizer.zero_grad()
             with nvtx.annotate("back propagation"):
                 loss.backward()
 
@@ -617,9 +616,22 @@ def train():
                 param_group['lr'] = new_lrate
             ################################
 
-            dt = time.time()-time0
-
             # Rest is logging
+
+            # Write scalars to log
+            if i % args.i_print == 0 and i > 0:
+                torch.cuda.synchronize()
+
+                writer.add_scalar("loss", loss.item(), i)
+                
+                writer.add_scalar("render_loss", render_loss.item(), i)
+                writer.add_scalar("depth_loss", depth_loss.item(), i)
+                writer.add_scalar("flow_loss", flow_loss.item(), i)
+                writer.add_scalar("prob_reg_loss", prob_reg_loss.item(), i)
+
+                writer.add_scalar("sf_reg_loss", sf_reg_loss.item(), i)
+                writer.add_scalar("sf_cycle_loss", sf_cycle_loss.item(), i)
+                writer.add_scalar("scene_flow_smoothness_loss", scene_flow_smoothness_loss.item(), i)
 
             # Save network weights
             if i%args.i_weights==0 and i > 0:
@@ -633,19 +645,6 @@ def train():
                 }, path)
 
                 print('Saved checkpoints at', path)
-
-            # Write scalars to log
-            if i % args.i_print == 0 and i > 0:
-                writer.add_scalar("loss", loss.item(), i)
-                
-                writer.add_scalar("render_loss", render_loss.item(), i)
-                writer.add_scalar("depth_loss", depth_loss.item(), i)
-                writer.add_scalar("flow_loss", flow_loss.item(), i)
-                writer.add_scalar("prob_reg_loss", prob_reg_loss.item(), i)
-
-                writer.add_scalar("sf_reg_loss", sf_reg_loss.item(), i)
-                writer.add_scalar("sf_cycle_loss", sf_cycle_loss.item(), i)
-                writer.add_scalar("scene_flow_smoothness_loss", scene_flow_smoothness_loss.item(), i)
 
             # Generate and save images (RGB, depth map, etc) to log
             if i%args.i_img == 0 and i > 0:

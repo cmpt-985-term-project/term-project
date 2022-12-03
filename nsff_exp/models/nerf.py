@@ -105,11 +105,10 @@ class DynamicNeRF(nn.Module):
         x = self.density_mlp(input_position)
 
         # 2 x 3-dim scene flow, 2 x 1-dim disocclusion blend, 256-dim feature vector
-        scene_flow, disocclusion_blend, feature_vector = torch.split(x, [6, 2, self.W], dim=-1)
+        scene_flow, disocclusion_blend, density, feature_vector = torch.split(x, [6, 2, 1, self.W], dim=-1)
 
         scene_flow = torch.tanh(scene_flow)
         disocclusion_blend = torch.sigmoid(disocclusion_blend)
-        density = feature_vector[:, 0:1]
 
         rgb = self.color_mlp(torch.cat([input_view, feature_vector], dim=-1))
 
