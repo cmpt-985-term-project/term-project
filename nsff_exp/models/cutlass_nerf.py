@@ -12,7 +12,6 @@ import tinycudann as tcnn
 import json
 import nvtx
 
-
 # A "Density" (not view-angle dependent) MLP
 class CutlassDensityMLP(nn.Module):
     def __init__(self, in_channels, out_channels, degrees=10):

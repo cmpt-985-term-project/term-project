@@ -14,7 +14,7 @@ from tqdm import tqdm, trange
 from render_utils import *
 from run_nerf_helpers import *
 from load_llff import *
-
+from evaluation import *
 # For performance profiling
 import nvtx
 import contextlib
@@ -365,7 +365,7 @@ def train():
 
     # Note: bfloat16 has the same range as float32, at the cost of precision.
     if args.use_amp:
-        autocast_context = torch.autocast(device_type="cuda", dtype=torch.float16)
+        autocast_context = torch.autocast(device_type="cuda", dtype=torch.bfloat16)
         loss_scaler = torch.cuda.amp.GradScaler()
     else:
         autocast_context = contextlib.nullcontext()
@@ -644,7 +644,6 @@ def train():
                 writer.add_scalar("depth_loss", depth_loss.item(), i)
                 writer.add_scalar("flow_loss", flow_loss.item(), i)
                 writer.add_scalar("disocclusion_loss", prob_reg_loss.item(), i)
-
                 writer.add_scalar("sf_reg_loss", sf_reg_loss.item(), i)
                 writer.add_scalar("sf_cycle_loss", sf_cycle_loss.item(), i)
                 writer.add_scalar("scene_flow_smoothness_loss", scene_flow_smoothness_loss.item(), i)
@@ -693,7 +692,6 @@ def train():
                 # flow_bwd_rgb = torch.Tensor(flow_to_image(flow_bwd)/255.)#.cuda()
                 # writer.add_image("val/gt_flow_bwd", 
                 #                 flow_bwd_rgb, global_step=i, dataformats='HWC')
-
                 with torch.no_grad():
                     ret = render(img_idx_embed, 
                                 chain_bwd, False,
@@ -701,7 +699,26 @@ def train():
                                 chunk=1024*16, 
                                 c2w=pose,
                                 **render_kwargs_test)
+                    
+                    model = models.PerceptualLoss(model='net-lin',net='alex',
+                                    use_gpu=True,version=0.1)
 
+                    #evaluation metrics 
+                    gt_img = target.cpu().numpy()
+                    rgb = ret['rgb_map_ref'].detach().cpu().numpy()
+                    mask_gt_eval = mask_gt.unsqueeze(1).repeat(1, 3, 1).reshape([mask_gt.shape[0], mask_gt.shape[1], 3])
+                    mask_gt_eval = mask_gt_eval.cpu().numpy()
+                    
+                    ssim = calculate_ssim(gt_img, rgb, mask_gt_eval)
+                    psnr = calculate_psnr(gt_img, rgb, mask_gt_eval)
+                
+
+                    target_0 = torch.Tensor(gt_img[:, :, :, np.newaxis].transpose((3, 2, 0, 1)))
+                    rgb_0 = torch.Tensor(rgb[:, :, :, np.newaxis].transpose((3, 2, 0, 1)))
+                    mask_gt_0 = torch.Tensor(mask_gt_eval[:, :, :, np.newaxis].transpose((3, 2, 0, 1)))
+
+                    lpips = model.forward(target_0, rgb_0, mask_gt_0).item()
+                    
                     # pose_post = poses[min(img_i + 1, int(num_img) - 1), :3,:4]
                     # pose_prev = poses[max(img_i - 1, 0), :3,:4]
                     # render_of_fwd, render_of_bwd = compute_optical_flow(pose_post, pose, pose_prev, 
@@ -709,7 +726,10 @@ def train():
 
                     # render_flow_fwd_rgb = torch.Tensor(flow_to_image(render_of_fwd.cpu().numpy())/255.)#.cuda()
                     # render_flow_bwd_rgb = torch.Tensor(flow_to_image(render_of_bwd.cpu().numpy())/255.)#.cuda()
-                    
+                    writer.add_scalar("ssim", ssim, i)
+                    writer.add_scalar("psnr", ssim, i)
+                    writer.add_scalar("lpips", ssim, i)
+
                     writer.add_image("predicted_rgb", torch.clamp(ret['rgb_map_ref'], 0., 1.),
                                     global_step=i, dataformats='HWC')
                     writer.add_image("predicted_depth", normalize_depth(ret['depth_map_ref']),
@@ -745,5 +765,4 @@ if __name__=='__main__':
     # Set the default tensor type - keep it at 32-bit float as much as possible.
     # Only use 16-bit for the model weights and training data
     torch.set_default_tensor_type('torch.cuda.FloatTensor')
-
     train()

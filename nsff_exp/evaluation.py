@@ -142,6 +142,22 @@ def config_parser():
                         help='frequency of tensorboard image logging')
     parser.add_argument("--i_weights", type=int, default=10000, 
                         help='frequency of weight ckpt saving')
+    
+    # CMPT-985 Term Project Options...
+    parser.add_argument('--nerf_model', type=str, default='PyTorch',
+                        help='NeRF architecture. Either Pytorch, FusedMLP, or CutlassMLP')
+    parser.add_argument("--allow_tf32", action='store_true',
+                        help='Enable TF32 tensor cores for matrix multiplication')
+    parser.add_argument("--use_fp16", action='store_true',
+                        help='Default of tf.float16 for half-precision floating point training')
+    parser.add_argument("--use_amp", action='store_true',
+                        help='Use automated mixed-precision')
+    parser.add_argument("--enable_fused_adam", action='store_true',
+                        help='Enable fused kernel for Adam optimization - default False')
+    parser.add_argument("--enable_pinned_memory", action='store_true',
+                        help='Use pinned memory with data loaders')
+    parser.add_argument("--optimizer", type=str, default='Adam',
+                        help='Optimizer to use. Either SGD, Adagrad, or Adam (default)')
 
     return parser
 
@@ -304,8 +320,8 @@ def evaluation():
                                     interpolation=cv2.INTER_AREA)
                 gt_img = np.float32(gt_img) / 255
 
-                psnr = skimage.measure.compare_psnr(gt_img, rgb)
-                ssim = skimage.measure.compare_ssim(gt_img, rgb, 
+                psnr = skimage.metrics.peak_signal_noise_ratio(gt_img, rgb)
+                ssim = skimage.metrics.structural_similarity(gt_img, rgb, 
                                                     multichannel=True)
 
                 gt_img_0 = im2tensor(gt_img).cuda()
@@ -331,7 +347,6 @@ def evaluation():
                                         interpolation=cv2.INTER_NEAREST)
 
                 dynamic_mask_0 = torch.Tensor(dynamic_mask[:, :, :, np.newaxis].transpose((3, 2, 0, 1)))
-
                 dynamic_ssim = calculate_ssim(gt_img, 
                                               rgb, 
                                               dynamic_mask)
@@ -342,7 +357,6 @@ def evaluation():
                 dynamic_lpips = model.forward(gt_img_0, 
                                               rgb_0, 
                                               dynamic_mask_0).item()
-
                 total_psnr_dy += dynamic_psnr
                 total_ssim_dy += dynamic_ssim
                 total_lpips_dy += dynamic_lpips
