@@ -152,7 +152,7 @@ def calculate_psnr(img1, img2, mask):
     img2 = img2.astype(np.float64)
     mask = mask.astype(np.float64)
 
-    num_valid = np.sum(mask) + 1e-8
+    num_valid = np.sum(mask) + 1e-7
 
     mse = np.sum((img1 - img2)**2 * mask) / num_valid
     
@@ -171,7 +171,7 @@ def calculate_ssim(img1, img2, mask):
         raise ValueError('Input images must have the same dimensions.')
 
     _, ssim_map = structural_similarity(img1, img2, multichannel=True, full=True)
-    num_valid = np.sum(mask) + 1e-8
+    num_valid = np.sum(mask) + 1e-7
 
     return np.sum(ssim_map * mask) / num_valid
 

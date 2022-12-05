@@ -176,7 +176,7 @@ def render_slowmo_bt(disps, render_poses, bt_poses,
             alpha_final = alpha_1_final + alpha_2_fianl
 
             # final_depth += T_i * (alpha_final) * z_vals[..., j]
-            T_i = T_i * (1.0 - alpha_final + 1e-10)
+            T_i = T_i * (1.0 - alpha_final + 1e-7)
 
         filename = os.path.join(savedir, 'slow-mo_%03d.jpg'%(i))
         rgb8 = to8b(final_rgb.permute(1, 2, 0).cpu().numpy())
@@ -271,7 +271,7 @@ def render_lockcam_slowmo(ref_c2w, num_img,
             alpha_2_fianl = (1.0 - (1. - splat_alpha_dy_2) * (1. - splat_alpha_rig_2) ) * ratio
             alpha_final = alpha_1_final + alpha_2_fianl
 
-            T_i = T_i * (1.0 - alpha_final + 1e-10)
+            T_i = T_i * (1.0 - alpha_final + 1e-7)
 
         filename = os.path.join(savedir, '%03d.jpg'%(i))
         rgb8 = to8b(final_rgb.permute(1, 2, 0).cpu().numpy())
@@ -641,8 +641,8 @@ def create_nerf(args):
     """Instantiate NeRF's MLP model.
     """
     if args.nerf_model == 'PyTorch':
-        model = DynamicNeRF(args.use_fp16).to(device)
-        model_rigid = StaticNeRF(args.use_fp16).to(device)
+        model = DynamicNeRF().to(device)
+        model_rigid = StaticNeRF().to(device)
     elif args.nerf_model == 'CutlassMLP':
         model = CutlassDynamicNeRF().to(device)
         model_rigid = CutlassStaticNeRF().to(device)
@@ -747,7 +747,7 @@ def raw2outputs_blending(raw_dy,
     alpha_rig = (1. - torch.exp(-opacity_rigid * dists)) * (1. - raw_blend_w)
 
     Ts = torch.cumprod(torch.cat([torch.ones((alpha_dy.shape[0], 1)), 
-                                (1. - alpha_dy) * (1. - alpha_rig)  + 1e-10], -1), -1)[:, :-1]
+                                (1. - alpha_dy) * (1. - alpha_rig)  + 1e-7], -1), -1)[:, :-1]
     
     weights_dy = Ts * alpha_dy
     weights_rig = Ts * alpha_rig
@@ -762,7 +762,7 @@ def raw2outputs_blending(raw_dy,
     # compute dynamic depth only
     alpha_fg = 1. - torch.exp(-opacity_dy * dists)
     weights_fg = alpha_fg * torch.cumprod(torch.cat([torch.ones((alpha_fg.shape[0], 1)), 
-                                                                1.-alpha_fg + 1e-10], -1), -1)[:, :-1]
+                                                                1.-alpha_fg + 1e-7], -1), -1)[:, :-1]
     depth_map_fg = torch.sum(weights_fg * z_vals, -1)
     rgb_map_fg = torch.sum(weights_fg[..., None] * rgb_dy, -2) 
 
@@ -792,7 +792,7 @@ def raw2outputs_warp(raw_p,
 
     alpha = 1. - torch.exp(-opacity * dists)
 
-    weights = alpha * torch.cumprod(torch.cat([torch.ones((alpha.shape[0], 1)), 1.-alpha + 1e-10], -1), -1)[:, :-1]
+    weights = alpha * torch.cumprod(torch.cat([torch.ones((alpha.shape[0], 1)), 1.-alpha + 1e-7], -1), -1)[:, :-1]
     rgb_map = torch.sum(weights[...,None] * rgb, -2)  # [N_rays, 3]
 
     depth_map = torch.sum(weights * z_vals, -1)
@@ -828,12 +828,12 @@ def raw2outputs(raw, z_vals, rays_d, raw_noise_std=0, white_bkgd=False, pytest=F
         noise = torch.randn(raw[...,3].shape) * raw_noise_std
 
     alpha = raw2alpha(raw[...,3] + noise, dists)  # [N_rays, N_samples]
-    # weights = alpha * tf.math.cumprod(1.-alpha + 1e-10, -1, exclusive=True)
-    weights = alpha * torch.cumprod(torch.cat([torch.ones((alpha.shape[0], 1)), 1.-alpha + 1e-10], -1), -1)[:, :-1]
+    # weights = alpha * tf.math.cumprod(1.-alpha + 1e-7, -1, exclusive=True)
+    weights = alpha * torch.cumprod(torch.cat([torch.ones((alpha.shape[0], 1)), 1.-alpha + 1e-7], -1), -1)[:, :-1]
     rgb_map = torch.sum(weights[...,None] * rgb, -2)  # [N_rays, 3]
 
     depth_map = torch.sum(weights * z_vals, -1)
-    disp_map = 1./torch.max(1e-10 * torch.ones_like(depth_map), depth_map / torch.sum(weights, -1))
+    disp_map = 1./torch.max(1e-7 * torch.ones_like(depth_map), depth_map / torch.sum(weights, -1))
 
 
     return rgb_map, weights, depth_map
