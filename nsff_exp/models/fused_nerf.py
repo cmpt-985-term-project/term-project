@@ -41,7 +41,7 @@ class FusedDensityMLP(nn.Module):
         self.position_encoder = tcnn.Encoding(n_input_dims=in_channels, encoding_config=encoding_config)
 
         network_config1 = json.loads(f'''
-            {{"otype":"FullyFusedMLP", "activation":"ReLU", "output_activation":"None", "n_neurons":{self.W},
+            {{"otype":"FullyFusedMLP", "activation":"ReLU", "output_activation":"ReLU", "n_neurons":{self.W},
               "n_hidden_layers":2, "feedback_alignment":false}}''')
         self.model_part1 = tcnn.Network(n_input_dims=self.position_encoder.n_output_dims, n_output_dims=self.W, network_config=network_config1)
 
