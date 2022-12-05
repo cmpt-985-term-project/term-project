@@ -484,6 +484,7 @@ def train():
                             rays=batch_rays,
                             verbose=i < 10, retraw=True,
                             **render_kwargs_train)
+
                 pose_post = poses[min(img_i + 1, int(num_img) - 1), :3,:4]
                 pose_prev = poses[max(img_i - 1, 0), :3,:4]
 
@@ -523,8 +524,6 @@ def train():
                     render_loss += compute_mse(ret['rgb_map_prev_dy'], 
                                             target_rgb, 
                                             weight_map_prev.unsqueeze(-1) * weights_map_dd)
-
-                
 
                 # union rendering loss
                 render_loss += img2mse(ret['rgb_map_ref'][:N_rand, ...], 
@@ -592,7 +591,7 @@ def train():
                 scene_flow_smoothness_loss += args.w_sm * \
                     compute_scene_flow_temporal_smoothness(ret['raw_pts_ref'], ret['raw_pts_post'], ret['raw_pts_prev'], H, W, focal)
 
-                entropy_loss = args.w_entropy * torch.mean(-ret['raw_blend_w'] * torch.log(ret['raw_blend_w'] + 1e-8))
+                entropy_loss = args.w_entropy * torch.mean(-ret['raw_blend_w'] * torch.log(ret['raw_blend_w'] + 1e-7))
 
                 # # ======================================  two-frames chain loss ===============================
                 if chain_bwd:
@@ -644,8 +643,7 @@ def train():
                 writer.add_scalar("render_loss", render_loss.item(), i)
                 writer.add_scalar("depth_loss", depth_loss.item(), i)
                 writer.add_scalar("flow_loss", flow_loss.item(), i)
-                writer.add_scalar("prob_reg_loss", prob_reg_loss.item(), i)
-
+                writer.add_scalar("disocclusion_loss", prob_reg_loss.item(), i)
                 writer.add_scalar("sf_reg_loss", sf_reg_loss.item(), i)
                 writer.add_scalar("sf_cycle_loss", sf_cycle_loss.item(), i)
                 writer.add_scalar("scene_flow_smoothness_loss", scene_flow_smoothness_loss.item(), i)

@@ -34,14 +34,14 @@ class FusedDensityMLP(nn.Module):
         # Network parameters
         self.W = 128
 
-        #encoding_config = json.loads(f'{{"otype":"Frequency", "n_frequencies":{degrees}}}')
-        encoding_config = json.loads(f'''
-            {{"otype":"Grid", "type":"Hash", "n_levels":16, "n_features_per_level":2, "log2_hashmap_size": 19,
-              "base_resolution": 16, "per_level_scale": 2.0, "interpolation": "Linear"}}''')
+        encoding_config = json.loads(f'{{"otype":"Frequency", "n_frequencies":{degrees}}}')
+        #encoding_config = json.loads(f'''
+        #    {{"otype":"Grid", "type":"Hash", "n_levels":16, "n_features_per_level":2, "log2_hashmap_size": 19,
+        #      "base_resolution": 16, "per_level_scale": 2.0, "interpolation": "Linear"}}''')
         self.position_encoder = tcnn.Encoding(n_input_dims=in_channels, encoding_config=encoding_config)
 
         network_config1 = json.loads(f'''
-            {{"otype":"FullyFusedMLP", "activation":"ReLU", "output_activation":"None", "n_neurons":{self.W},
+            {{"otype":"FullyFusedMLP", "activation":"ReLU", "output_activation":"ReLU", "n_neurons":{self.W},
               "n_hidden_layers":2, "feedback_alignment":false}}''')
         self.model_part1 = tcnn.Network(n_input_dims=self.position_encoder.n_output_dims, n_output_dims=self.W, network_config=network_config1)
 

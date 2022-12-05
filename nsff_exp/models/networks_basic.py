@@ -18,8 +18,8 @@ def spatial_average(in_tens, mask=None, keepdim=True):
         return in_tens.mean([2,3], keepdim=keepdim)
     else:
         mask_resized = torch.nn.functional.interpolate(mask[:, 0:1, :, :], size=[in_tens.size(2), in_tens.size(3)])
-        num_valid = torch.sum(mask_resized)
-        return torch.sum(in_tens * mask_resized) / (num_valid + 1e-8)
+        num_valid = torch.sum(mask_resized.to(torch.float32))
+        return torch.sum(in_tens * mask_resized) / (num_valid + 1e-7)
 
 def upsample(in_tens, out_HW=(64,64)): # assumes scale factor is same for H and W
     in_H, in_W = in_tens.shape[2], in_tens.shape[3]
