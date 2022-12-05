@@ -78,7 +78,7 @@ def compute_mse(pred, gt, mask, dim=2):
     elif dim == 3:
         mask_rep = mask.repeat(1, 1, pred.size(-1))
 
-    num_pix = torch.sum(mask_rep) + 1e-8
+    num_pix = torch.sum(mask_rep) + 1e-7
     return torch.sum( (pred - gt)**2 * mask_rep )/ num_pix
 
 def compute_mae(pred, gt, mask, dim=2):
@@ -89,7 +89,7 @@ def compute_mae(pred, gt, mask, dim=2):
     elif dim == 3:
         mask_rep = mask.repeat(1, 1, pred.size(-1))
 
-    num_pix = torch.sum(mask_rep) + 1e-8
+    num_pix = torch.sum(mask_rep) + 1e-7
     return torch.sum( torch.abs(pred - gt) * mask_rep )/ num_pix
 
 
@@ -268,7 +268,7 @@ def se3_transform_points(pts_ref, raw_rot_ref2prev, raw_trans_ref2prev):
 
 
 def NDC2Euclidean(xyz_ndc, H, W, f):
-    z_e = 2./ (xyz_ndc[..., 2:3] - 1. + 1e-6)
+    z_e = 2./ (xyz_ndc[..., 2:3] - 1. + 1e-7)
     x_e = - xyz_ndc[..., 0:1] * z_e * W/ (2. * f)
     y_e = - xyz_ndc[..., 1:2] * z_e * H/ (2. * f)
 

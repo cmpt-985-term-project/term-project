@@ -591,7 +591,7 @@ def train():
                 scene_flow_smoothness_loss += args.w_sm * \
                     compute_scene_flow_temporal_smoothness(ret['raw_pts_ref'], ret['raw_pts_post'], ret['raw_pts_prev'], H, W, focal)
 
-                entropy_loss = args.w_entropy * torch.mean(-ret['raw_blend_w'] * torch.log(ret['raw_blend_w'] + 1e-8))
+                entropy_loss = args.w_entropy * torch.mean(-ret['raw_blend_w'] * torch.log(ret['raw_blend_w'] + 1e-7))
 
                 # # ======================================  two-frames chain loss ===============================
                 if chain_bwd:
