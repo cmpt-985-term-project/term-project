@@ -365,7 +365,7 @@ def train():
 
     # Note: bfloat16 has the same range as float32, at the cost of precision.
     if args.use_amp:
-        autocast_context = torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+        autocast_context = torch.autocast(device_type="cuda", dtype=torch.float16)
         loss_scaler = torch.cuda.amp.GradScaler()
     else:
         autocast_context = contextlib.nullcontext()
