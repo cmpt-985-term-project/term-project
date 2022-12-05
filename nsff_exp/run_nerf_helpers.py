@@ -78,7 +78,7 @@ def compute_mse(pred, gt, mask, dim=2):
     elif dim == 3:
         mask_rep = mask.repeat(1, 1, pred.size(-1))
 
-    num_pix = torch.sum(mask_rep) + 1e-7
+    num_pix = torch.sum(mask_rep.to(torch.float32)) + 1e-7
     return torch.sum( (pred - gt)**2 * mask_rep )/ num_pix
 
 def compute_mae(pred, gt, mask, dim=2):
@@ -89,7 +89,8 @@ def compute_mae(pred, gt, mask, dim=2):
     elif dim == 3:
         mask_rep = mask.repeat(1, 1, pred.size(-1))
 
-    num_pix = torch.sum(mask_rep) + 1e-7
+    num_pix = torch.sum(mask_rep.to(torch.float32)) + 1e-7
+
     return torch.sum( torch.abs(pred - gt) * mask_rep )/ num_pix
 
 
@@ -266,9 +267,17 @@ def se3_transform_points(pts_ref, raw_rot_ref2prev, raw_trans_ref2prev):
     pts_prev = torch.squeeze(torch.matmul(raw_rot_ref2prev, pts_ref[..., :3].unsqueeze(-1)) + raw_trans_ref2prev)
     return pts_prev
 
-
 def NDC2Euclidean(xyz_ndc, H, W, f):
-    z_e = 2./ (xyz_ndc[..., 2:3] - 1. + 1e-7)
+    # NDC coordinates has -1 < z < 1, with -1 at near plane, and +1 at far plane (set to infinity).
+    # When we add flow vectors to scene points, we can exceed these bounds, which causes overflow.
+    # This function is used to compute Euclidean distance for scene flow vector loss functions.
+    #
+    # Originally, the code added a small epsilon to try to prevent this, but this fails if z=(1.0 - 1e-6)
+    #   z_e = 2./ (xyz_ndc[..., 2:3] - 1. + 1e-6)
+    #
+    # Clamp instead...
+    #
+    z_e = 2./ (torch.clamp(xyz_ndc[..., 2:3], -1.0 + 1e-3, 1.0 - 1e-3) - 1.0)
     x_e = - xyz_ndc[..., 0:1] * z_e * W/ (2. * f)
     y_e = - xyz_ndc[..., 1:2] * z_e * H/ (2. * f)
 

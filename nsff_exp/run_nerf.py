@@ -643,7 +643,7 @@ def train():
                 writer.add_scalar("render_loss", render_loss.item(), i)
                 writer.add_scalar("depth_loss", depth_loss.item(), i)
                 writer.add_scalar("flow_loss", flow_loss.item(), i)
-                writer.add_scalar("prob_reg_loss", prob_reg_loss.item(), i)
+                writer.add_scalar("disocclusion_loss", prob_reg_loss.item(), i)
 
                 writer.add_scalar("sf_reg_loss", sf_reg_loss.item(), i)
                 writer.add_scalar("sf_cycle_loss", sf_cycle_loss.item(), i)
