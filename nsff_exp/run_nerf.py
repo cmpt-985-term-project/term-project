@@ -171,6 +171,8 @@ def config_parser():
                         help='Default of tf.float16 for half-precision floating point training')
     parser.add_argument("--use_amp", action='store_true',
                         help='Use automated mixed-precision')
+    parser.add_argument("--use_loss_autoscaler", action='store_true',
+                        help='Use loss auto-scaler')
     parser.add_argument("--enable_fused_adam", action='store_true',
                         help='Enable fused kernel for Adam optimization - default False')
     parser.add_argument("--enable_pinned_memory", action='store_true',
@@ -366,9 +368,11 @@ def train():
     # Note: bfloat16 has the same range as float32, at the cost of precision.
     if args.use_amp:
         autocast_context = torch.autocast(device_type="cuda", dtype=torch.bfloat16)
-        loss_scaler = torch.cuda.amp.GradScaler()
     else:
         autocast_context = contextlib.nullcontext()
+
+    if args.use_loss_autoscaler:
+        loss_scaler = torch.cuda.amp.GradScaler()
 
     start = start + 1
     for i in trange(start, N_iters, mininterval=mininterval, maxinterval=maxinterval):
@@ -613,7 +617,7 @@ def train():
                     depth_loss + entropy_loss
 
             optimizer.zero_grad()
-            if args.use_amp:
+            if args.use_loss_autoscaler:
                 loss_scaler.scale(loss).backward()
                 loss_scaler.step(optimizer)
                 loss_scaler.update()
