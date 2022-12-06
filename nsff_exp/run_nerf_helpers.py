@@ -57,7 +57,10 @@ def ndc_rays(H, W, focal, near, rays_o, rays_d):
     return rays_o, rays_d
 
 
-def compute_depth_loss(pred_depth, gt_depth):   
+def compute_depth_loss(pred_depth, gt_depth):
+    pred_depth = pred_depth.to(torch.float32)
+    gt_depth = gt_depth.to(torch.float32)
+
     t_pred = torch.median(pred_depth)
     s_pred = torch.mean(torch.abs(pred_depth - t_pred))
 
@@ -79,7 +82,9 @@ def compute_mse(pred, gt, mask, dim=2):
         mask_rep = mask.repeat(1, 1, pred.size(-1))
 
     num_pix = torch.sum(mask_rep.to(torch.float32)) + 1e-7
-    return torch.sum( (pred - gt)**2 * mask_rep )/ num_pix
+    scaled_mask = mask_rep.to(torch.float32) / num_pix
+
+    return torch.sum((pred - gt)**2 * scaled_mask)
 
 def compute_mae(pred, gt, mask, dim=2):
     if dim == 1:
@@ -90,8 +95,9 @@ def compute_mae(pred, gt, mask, dim=2):
         mask_rep = mask.repeat(1, 1, pred.size(-1))
 
     num_pix = torch.sum(mask_rep.to(torch.float32)) + 1e-7
+    scaled_mask = mask_rep.to(torch.float32) / num_pix
 
-    return torch.sum( torch.abs(pred - gt) * mask_rep )/ num_pix
+    return torch.sum(torch.abs(pred - gt) * scaled_mask)
 
 
 def normalize_depth(depth):
@@ -263,6 +269,7 @@ def perspective_projection(pts_3d, h, w, f):
     return pts_2d    
 
 
+
 def se3_transform_points(pts_ref, raw_rot_ref2prev, raw_trans_ref2prev):
     pts_prev = torch.squeeze(torch.matmul(raw_rot_ref2prev, pts_ref[..., :3].unsqueeze(-1)) + raw_trans_ref2prev)
     return pts_prev
@@ -276,13 +283,12 @@ def NDC2Euclidean(xyz_ndc, H, W, f):
     #   z_e = 2./ (xyz_ndc[..., 2:3] - 1. + 1e-6)
     #
     # Clamp instead...
-    #
-    z_e = 2./ (torch.clamp(xyz_ndc[..., 2:3], -1.0 + 1e-3, 1.0 - 1e-3) - 1.0)
+    z_e = 2./ (torch.clamp(xyz_ndc[..., 2:3], -1.0, 0.99) - 1.0)
     x_e = - xyz_ndc[..., 0:1] * z_e * W/ (2. * f)
     y_e = - xyz_ndc[..., 1:2] * z_e * H/ (2. * f)
 
     xyz_e = torch.cat([x_e, y_e, z_e], -1)
- 
+
     return xyz_e
 
 import sys
