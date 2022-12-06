@@ -419,54 +419,53 @@ def train():
                     flow_fwd = flow_fwd + uv_grid
                     flow_bwd = flow_bwd + uv_grid
 
-                if N_rand is not None:
-                    with nvtx.annotate("Get Rays"):
-                        rays_o, rays_d = get_rays(H, W, focal, torch.Tensor(pose))  # (H, W, 3), (H, W, 3)
-                        coords = torch.stack(torch.meshgrid(torch.linspace(0, H-1, H), torch.linspace(0, W-1, W)), -1)  # (H, W, 2)
-                        coords = torch.reshape(coords, [-1,2])  # (H * W, 2)
+                with nvtx.annotate("Get Rays"):
+                    rays_o, rays_d = get_rays(H, W, focal, torch.Tensor(pose))  # (H, W, 3), (H, W, 3)
+                    coords = torch.stack(torch.meshgrid(torch.linspace(0, H-1, H), torch.linspace(0, W-1, W)), -1)  # (H, W, 2)
+                    coords = torch.reshape(coords, [-1,2])  # (H * W, 2)
 
-                        if args.use_motion_mask and i < decay_iteration * 1000:
-                            num_extra_sample = args.num_extra_sample
-                            select_inds_hard = np.random.choice(hard_coords.shape[0], 
-                                                                size=[min(hard_coords.shape[0], 
-                                                                    num_extra_sample)], 
-                                                                replace=False)  # (N_rand,)
-                            select_inds_all = np.random.choice(coords.shape[0], 
-                                                            size=[N_rand], 
+                    if args.use_motion_mask and i < decay_iteration * 1000:
+                        num_extra_sample = args.num_extra_sample
+                        select_inds_hard = np.random.choice(hard_coords.shape[0], 
+                                                            size=[min(hard_coords.shape[0], 
+                                                                num_extra_sample)], 
                                                             replace=False)  # (N_rand,)
-
-                            select_coords_hard = hard_coords[select_inds_hard].long()
-                            select_coords_all = coords[select_inds_all].long()
-
-                            select_coords = torch.cat([select_coords_all, select_coords_hard], 0)
-
-                        else:
-                            select_inds = np.random.choice(coords.shape[0], 
+                        select_inds_all = np.random.choice(coords.shape[0], 
                                                         size=[N_rand], 
                                                         replace=False)  # (N_rand,)
-                            select_coords = coords[select_inds].long()  # (N_rand, 2)
-                        
-                        rays_o = rays_o[select_coords[:, 0], 
+
+                        select_coords_hard = hard_coords[select_inds_hard].long()
+                        select_coords_all = coords[select_inds_all].long()
+
+                        select_coords = torch.cat([select_coords_all, select_coords_hard], 0)
+
+                    else:
+                        select_inds = np.random.choice(coords.shape[0], 
+                                                    size=[N_rand], 
+                                                    replace=False)  # (N_rand,)
+                        select_coords = coords[select_inds].long()  # (N_rand, 2)
+                    
+                    rays_o = rays_o[select_coords[:, 0], 
+                                    select_coords[:, 1]]  # (N_rand, 3)
+                    rays_d = rays_d[select_coords[:, 0], 
+                                    select_coords[:, 1]]  # (N_rand, 3)
+                    batch_rays = torch.stack([rays_o, rays_d], 0)
+                    target_rgb = target[select_coords[:, 0], 
                                         select_coords[:, 1]]  # (N_rand, 3)
-                        rays_d = rays_d[select_coords[:, 0], 
-                                        select_coords[:, 1]]  # (N_rand, 3)
-                        batch_rays = torch.stack([rays_o, rays_d], 0)
-                        target_rgb = target[select_coords[:, 0], 
-                                            select_coords[:, 1]]  # (N_rand, 3)
-                        target_depth = depth_gt[select_coords[:, 0], 
+                    target_depth = depth_gt[select_coords[:, 0], 
+                                        select_coords[:, 1]]
+                    target_mask = mask_gt[select_coords[:, 0], 
+                                        select_coords[:, 1]].unsqueeze(-1)
+
+                    target_of_fwd = flow_fwd[select_coords[:, 0], 
                                             select_coords[:, 1]]
-                        target_mask = mask_gt[select_coords[:, 0], 
-                                            select_coords[:, 1]].unsqueeze(-1)
+                    target_fwd_mask = fwd_mask[select_coords[:, 0], 
+                                            select_coords[:, 1]].unsqueeze(-1)#.repeat(1, 2)
 
-                        target_of_fwd = flow_fwd[select_coords[:, 0], 
-                                                select_coords[:, 1]]
-                        target_fwd_mask = fwd_mask[select_coords[:, 0], 
-                                                select_coords[:, 1]].unsqueeze(-1)#.repeat(1, 2)
-
-                        target_of_bwd = flow_bwd[select_coords[:, 0], 
-                                                select_coords[:, 1]]
-                        target_bwd_mask = bwd_mask[select_coords[:, 0], 
-                                                select_coords[:, 1]].unsqueeze(-1)#.repeat(1, 2)
+                    target_of_bwd = flow_bwd[select_coords[:, 0], 
+                                            select_coords[:, 1]]
+                    target_bwd_mask = bwd_mask[select_coords[:, 0], 
+                                            select_coords[:, 1]].unsqueeze(-1)#.repeat(1, 2)
 
                 img_idx_embed = img_i/num_img * 2. - 1.0
 
@@ -621,7 +620,6 @@ def train():
             else:
                 loss.backward()
                 optimizer.step()
-
 
             # NOTE: IMPORTANT!
             ###   update learning rate   ###
