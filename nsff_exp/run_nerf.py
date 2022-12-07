@@ -167,16 +167,12 @@ def config_parser():
                         help='NeRF architecture. Either Pytorch, FusedMLP, or CutlassMLP')
     parser.add_argument("--allow_tf32", action='store_true',
                         help='Enable TF32 tensor cores for matrix multiplication')
-    parser.add_argument("--use_fp16", action='store_true',
-                        help='Default of tf.float16 for half-precision floating point training')
     parser.add_argument("--use_amp", action='store_true',
                         help='Use automated mixed-precision')
     parser.add_argument("--use_loss_autoscaler", action='store_true',
                         help='Use loss auto-scaler')
     parser.add_argument("--enable_fused_adam", action='store_true',
                         help='Enable fused kernel for Adam optimization - default False')
-    parser.add_argument("--enable_pinned_memory", action='store_true',
-                        help='Use pinned memory with data loaders')
     parser.add_argument("--optimizer", type=str, default='Adam',
                         help='Optimizer to use. Either SGD, Adagrad, or Adam (default)')
 
@@ -367,7 +363,7 @@ def train():
 
     # Note: bfloat16 has the same range as float32, at the cost of precision.
     if args.use_amp:
-        autocast_context = torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+        autocast_context = torch.autocast(device_type="cuda", dtype=torch.float16)
     else:
         autocast_context = contextlib.nullcontext()
 
