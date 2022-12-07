@@ -173,6 +173,8 @@ def config_parser():
                         help='Use loss auto-scaler')
     parser.add_argument("--enable_fused_adam", action='store_true',
                         help='Enable fused kernel for Adam optimization - default False')
+    parser.add_argument("--enable_pinned_memory", action='store_true',
+                        help='Use pinned memory with data loaders')
     parser.add_argument("--optimizer", type=str, default='Adam',
                         help='Optimizer to use. Either SGD, Adagrad, or Adam (default)')
 
@@ -725,8 +727,8 @@ def train():
                     # render_flow_fwd_rgb = torch.Tensor(flow_to_image(render_of_fwd.cpu().numpy())/255.)#.cuda()
                     # render_flow_bwd_rgb = torch.Tensor(flow_to_image(render_of_bwd.cpu().numpy())/255.)#.cuda()
                     writer.add_scalar("ssim", ssim, i)
-                    writer.add_scalar("psnr", ssim, i)
-                    writer.add_scalar("lpips", ssim, i)
+                    writer.add_scalar("psnr", psnr, i)
+                    writer.add_scalar("lpips", lpips, i)
 
                     writer.add_image("predicted_rgb", torch.clamp(ret['rgb_map_ref'], 0., 1.),
                                     global_step=i, dataformats='HWC')
