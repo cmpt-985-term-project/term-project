@@ -154,8 +154,6 @@ def config_parser():
                         help='Use automated mixed-precision')
     parser.add_argument("--enable_fused_adam", action='store_true',
                         help='Enable fused kernel for Adam optimization - default False')
-    parser.add_argument("--enable_pinned_memory", action='store_true',
-                        help='Use pinned memory with data loaders')
     parser.add_argument("--optimizer", type=str, default='Adam',
                         help='Optimizer to use. Either SGD, Adagrad, or Adam (default)')
 

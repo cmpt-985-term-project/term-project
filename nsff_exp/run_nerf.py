@@ -165,20 +165,16 @@ def config_parser():
     # CMPT-985 Term Project Options...
     parser.add_argument('--nerf_model', type=str, default='PyTorch',
                         help='NeRF architecture. Either Pytorch, FusedMLP, or CutlassMLP')
-    parser.add_argument("--allow_tf32", action='store_true',
-                        help='Enable TF32 tensor cores for matrix multiplication')
-    parser.add_argument("--use_fp16", action='store_true',
-                        help='Default of tf.float16 for half-precision floating point training')
-    parser.add_argument("--use_amp", action='store_true',
-                        help='Use automated mixed-precision')
-    parser.add_argument("--use_loss_autoscaler", action='store_true',
-                        help='Use loss auto-scaler')
-    parser.add_argument("--enable_fused_adam", action='store_true',
-                        help='Enable fused kernel for Adam optimization - default False')
-    parser.add_argument("--enable_pinned_memory", action='store_true',
-                        help='Use pinned memory with data loaders')
     parser.add_argument("--optimizer", type=str, default='Adam',
                         help='Optimizer to use. Either SGD, Adagrad, or Adam (default)')
+    parser.add_argument("--use_tf32", action='store_true',
+                        help='Enable TF32 tensor cores for matrix multiplication')
+    parser.add_argument("--use_amp", action='store_true',
+                        help='Use automated mixed-precision')
+    parser.add_argument("--use_bfloat16", action='store_true',
+                        help='Use bfloat16 instead of float16 in automated mixed precision. Requires Ampere or greater hardware.')
+    parser.add_argument("--use_loss_autoscaler", action='store_true',
+                        help='Use loss auto-scaler')
 
     return parser
 
@@ -191,7 +187,7 @@ def train():
     # Up-front performance changes
     # The flag below controls whether to allow TF32 on matmul. This flag defaults to False
     # in PyTorch 1.12 and later.
-    if args.allow_tf32:
+    if args.use_tf32:
         torch.backends.cuda.matmul.allow_tf32 = True
 
     # Load data
@@ -366,8 +362,9 @@ def train():
     maxinterval = 60 if args.use_clearml else 10.0
 
     # Note: bfloat16 has the same range as float32, at the cost of precision.
+    autocast_dtype = torch.bfloat16 if args.use_bfloat16 else torch.float16
     if args.use_amp:
-        autocast_context = torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+        autocast_context = torch.autocast(device_type="cuda", dtype=autocast_dtype)
     else:
         autocast_context = contextlib.nullcontext()
 
@@ -729,8 +726,8 @@ def train():
                     # render_flow_fwd_rgb = torch.Tensor(flow_to_image(render_of_fwd.cpu().numpy())/255.)#.cuda()
                     # render_flow_bwd_rgb = torch.Tensor(flow_to_image(render_of_bwd.cpu().numpy())/255.)#.cuda()
                     writer.add_scalar("ssim", ssim, i)
-                    writer.add_scalar("psnr", ssim, i)
-                    writer.add_scalar("lpips", ssim, i)
+                    writer.add_scalar("psnr", psnr, i)
+                    writer.add_scalar("lpips", lpips, i)
 
                     writer.add_image("predicted_rgb", torch.clamp(ret['rgb_map_ref'], 0., 1.),
                                     global_step=i, dataformats='HWC')
